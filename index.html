@@ -8,8 +8,6 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="GYM LOG" />
   <title>GYM LOG</title>
-  <link rel="manifest" href="./manifest.json" />
-  <link rel="apple-touch-icon" href="./icon.svg" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     html, body { height: 100%; background: #0c0c0c; }
@@ -23,15 +21,19 @@
   <div id="root"></div>
 
   <script>
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js').catch(console.error);
-    }
+    // Storage wrapper usando localStorage
     window.storage = {
-      get: async (key) => {
-        try { const v = localStorage.getItem(key); return v !== null ? { key, value: v } : null; } catch(e) { return null; }
+      get: async function(key) {
+        try {
+          var v = localStorage.getItem(key);
+          return v !== null ? { key: key, value: v } : null;
+        } catch(e) { return null; }
       },
-      set: async (key, value) => {
-        try { localStorage.setItem(key, value); return { key, value }; } catch(e) { return null; }
+      set: async function(key, value) {
+        try {
+          localStorage.setItem(key, value);
+          return { key: key, value: value };
+        } catch(e) { return null; }
       },
     };
   </script>
@@ -58,9 +60,8 @@
     const STORAGE_KEY = "gymlog-workouts-v1";
     const HISTORY_KEY = "gymlog-history-v1";
 
-    // Formata data ex: "sex, 30 mai"
     function formatDate(iso) {
-      const d = new Date(iso);
+      const d = new Date(iso + "T00:00:00");
       return d.toLocaleDateString("pt-BR", { weekday: "short", day: "numeric", month: "short" });
     }
 
@@ -70,14 +71,14 @@
 
     function GymLog() {
       const [workouts, setWorkouts] = useState({});
-      const [history, setHistory] = useState([]); // [{date, day, exercises}]
+      const [history, setHistory] = useState([]);
       const [activeDay, setActiveDay] = useState("seg");
       const [modal, setModal] = useState(null);
       const [editId, setEditId] = useState(null);
       const [loading, setLoading] = useState(true);
       const [saving, setSaving] = useState(false);
       const [deleteConfirm, setDeleteConfirm] = useState(null);
-      const [view, setView] = useState("treino"); // "treino" | "historico"
+      const [view, setView] = useState("treino");
       const [exerciseName, setExerciseName] = useState("");
       const [timerSeconds, setTimerSeconds] = useState(0);
       const [timerRunning, setTimerRunning] = useState(false);
@@ -89,7 +90,7 @@
       useEffect(() => {
         if (!timerRunning) return;
         const interval = setInterval(() => {
-          setTimerSeconds(s => s + 1);
+          setTimerSeconds(function(s) { return s + 1; });
         }, 1000);
         return () => clearInterval(interval);
       }, [timerRunning]);
@@ -114,40 +115,40 @@
         try { await window.storage.set(HISTORY_KEY, JSON.stringify(data)); } catch (e) {}
       };
 
-      // Registra o treino do dia no histórico
       const finishWorkout = async () => {
         const exs = workouts[activeDay] || [];
         if (exs.length === 0) return;
         const today = todayISO();
         const entry = { date: today, day: activeDay, exercises: exs };
-        // Remove entrada do mesmo dia+diaSemana se já existir, adiciona nova
-        const updated = [entry, ...history.filter(h => !(h.date === today && h.day === activeDay))];
+        const updated = [entry, ...history.filter(function(h) { return !(h.date === today && h.day === activeDay); })];
         setHistory(updated);
         await saveHistory(updated);
         alert("✅ Treino salvo no histórico!");
       };
 
       const dayExercises = workouts[activeDay] || [];
-      const currentDay = DAYS.find((d) => d.key === activeDay);
+      const currentDay = DAYS.find(function(d) { return d.key === activeDay; });
 
       const openAdd = () => { setEditId(null); setExerciseName(""); setSets([{ reps: "", weight: "" }]); setModal("add"); };
-      const openEdit = (ex) => { setEditId(ex.id); setExerciseName(ex.name); setSets(ex.sets.map((s) => ({ reps: String(s.reps), weight: String(s.weight) }))); setModal("edit"); };
+      const openEdit = (ex) => { setEditId(ex.id); setExerciseName(ex.name); setSets(ex.sets.map(function(s) { return { reps: String(s.reps), weight: String(s.weight) }; })); setModal("edit"); };
       const closeModal = () => { setModal(null); setEditId(null); };
-      const addSet = () => setSets([...sets, { reps: "", weight: "" }]);
-      const removeSet = (i) => sets.length > 1 && setSets(sets.filter((_, idx) => idx !== i));
+      const addSet = () => setSets(function(prev) { return [...prev, { reps: "", weight: "" }]; });
+      const removeSet = (i) => { if (sets.length > 1) setSets(sets.filter(function(_, idx) { return idx !== i; })); };
       const updateSet = (i, field, val) => { const n = [...sets]; n[i] = { ...n[i], [field]: val }; setSets(n); };
 
       const saveExercise = async () => {
         if (!exerciseName.trim()) return;
-        const validSets = sets.filter((s) => s.reps !== "" && s.weight !== "").map((s) => ({ reps: Number(s.reps), weight: Number(s.weight) }));
+        const validSets = sets
+          .filter(function(s) { return s.reps !== "" && s.weight !== ""; })
+          .map(function(s) { return { reps: Number(s.reps), weight: Number(s.weight) }; });
         if (validSets.length === 0) return;
         const updated = { ...workouts };
         const list = [...(updated[activeDay] || [])];
         if (editId) {
-          const idx = list.findIndex((e) => e.id === editId);
+          const idx = list.findIndex(function(e) { return e.id === editId; });
           if (idx !== -1) list[idx] = { id: editId, name: exerciseName.trim(), sets: validSets };
         } else {
-          list.push({ id: `${Date.now()}`, name: exerciseName.trim(), sets: validSets });
+          list.push({ id: String(Date.now()), name: exerciseName.trim(), sets: validSets });
         }
         updated[activeDay] = list;
         setWorkouts(updated);
@@ -157,43 +158,43 @@
 
       const confirmDelete = async (id) => {
         const updated = { ...workouts };
-        updated[activeDay] = (updated[activeDay] || []).filter((e) => e.id !== id);
+        updated[activeDay] = (updated[activeDay] || []).filter(function(e) { return e.id !== id; });
         setWorkouts(updated);
         await saveWorkouts(updated);
         setDeleteConfirm(null);
       };
 
-      const totalSetsForDay = (key) => (workouts[key] || []).reduce((acc, ex) => acc + ex.sets.length, 0);
+      const totalSetsForDay = (key) => (workouts[key] || []).reduce(function(acc, ex) { return acc + ex.sets.length; }, 0);
 
-      if (loading) return (
-        <div style={{ minHeight: "100vh", background: C.bg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
-          <div style={{ fontSize: 48 }}>🏋️</div>
-          <div style={{ fontFamily: "Impact, sans-serif", fontSize: 28, color: C.accent, letterSpacing: 4 }}>CARREGANDO...</div>
-        </div>
-      );
+      // ── LOADING ──
+      if (loading) {
+        return (
+          <div style={{ minHeight: "100vh", background: C.bg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
+            <div style={{ fontSize: 48 }}>🏋️</div>
+            <div style={{ fontFamily: "Impact, sans-serif", fontSize: 28, color: C.accent, letterSpacing: 4 }}>CARREGANDO...</div>
+          </div>
+        );
+      }
 
       // ── HISTÓRICO VIEW ──
       if (view === "historico") {
         const grouped = {};
-        history.forEach(h => {
+        history.forEach(function(h) {
           if (!grouped[h.date]) grouped[h.date] = [];
           grouped[h.date].push(h);
         });
-        const dates = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
+        const dates = Object.keys(grouped).sort(function(a, b) { return b.localeCompare(a); });
 
         return (
-          <>
+          <div>
             <style>{`@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@400;500;600;700&display=swap'); * { box-sizing: border-box; } body { margin: 0; background: #0c0c0c; overflow-y: auto; } input::placeholder { color: #3a3a3a; }`}</style>
             <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "'Barlow', sans-serif", maxWidth: 480, margin: "0 auto" }}>
-
-              {/* Header */}
               <div style={{ padding: "22px 20px 16px", background: C.surface, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, zIndex: 10 }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <div style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 40, letterSpacing: 4, color: C.accent, lineHeight: 1 }}>HISTÓRICO</div>
                   <button onClick={() => setView("treino")} style={{ background: C.accentDim, border: `1px solid ${C.accent}44`, color: C.accentText, borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow', sans-serif", letterSpacing: 1 }}>← TREINO</button>
                 </div>
               </div>
-
               <div style={{ padding: "16px", paddingBottom: 40 }}>
                 {dates.length === 0 && (
                   <div style={{ textAlign: "center", padding: "60px 20px", color: C.muted }}>
@@ -202,49 +203,55 @@
                     <div style={{ fontSize: 13 }}>Finalize um treino para aparecer aqui.</div>
                   </div>
                 )}
-                {dates.map(date => (
-                  <div key={date} style={{ marginBottom: 24 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: C.accentText, textTransform: "uppercase", marginBottom: 10, paddingLeft: 2 }}>
-                      📅 {formatDate(date)}
-                    </div>
-                    {grouped[date].map((entry, ei) => {
-                      const dayLabel = DAYS.find(d => d.key === entry.day);
-                      return (
-                        <div key={ei} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, marginBottom: 10, overflow: "hidden" }}>
-                          <div style={{ padding: "10px 14px", background: C.surface2, borderBottom: `1px solid ${C.border}` }}>
-                            <span style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 15, letterSpacing: 2, color: C.accent }}>{dayLabel ? dayLabel.full : entry.day}</span>
-                            <span style={{ fontSize: 11, color: C.muted, marginLeft: 8 }}>{entry.exercises.length} exercício{entry.exercises.length !== 1 ? "s" : ""}</span>
-                          </div>
-                          {entry.exercises.map((ex, xi) => (
-                            <div key={xi} style={{ padding: "10px 14px", borderBottom: xi < entry.exercises.length - 1 ? `1px solid ${C.border}` : "none" }}>
-                              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 6 }}>{ex.name}</div>
-                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                                {ex.sets.map((s, si) => (
-                                  <div key={si} style={{ background: "#111", border: `1px solid ${C.border}`, borderRadius: 6, padding: "4px 10px", fontSize: 12 }}>
-                                    <span style={{ color: C.muted2 }}>S{si+1} </span>
-                                    <span style={{ fontWeight: 700 }}>{s.reps}rep</span>
-                                    <span style={{ color: C.muted }}> · </span>
-                                    <span style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 15, color: C.accent }}>{s.weight}</span>
-                                    <span style={{ color: C.muted, fontSize: 10 }}>kg</span>
-                                  </div>
-                                ))}
-                              </div>
+                {dates.map(function(date) {
+                  return (
+                    <div key={date} style={{ marginBottom: 24 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: C.accentText, textTransform: "uppercase", marginBottom: 10, paddingLeft: 2 }}>
+                        📅 {formatDate(date)}
+                      </div>
+                      {grouped[date].map(function(entry, ei) {
+                        const dayLabel = DAYS.find(function(d) { return d.key === entry.day; });
+                        return (
+                          <div key={ei} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, marginBottom: 10, overflow: "hidden" }}>
+                            <div style={{ padding: "10px 14px", background: C.surface2, borderBottom: `1px solid ${C.border}` }}>
+                              <span style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 15, letterSpacing: 2, color: C.accent }}>{dayLabel ? dayLabel.full : entry.day}</span>
+                              <span style={{ fontSize: 11, color: C.muted, marginLeft: 8 }}>{entry.exercises.length} exercício{entry.exercises.length !== 1 ? "s" : ""}</span>
                             </div>
-                          ))}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ))}
+                            {entry.exercises.map(function(ex, xi) {
+                              return (
+                                <div key={xi} style={{ padding: "10px 14px", borderBottom: xi < entry.exercises.length - 1 ? `1px solid ${C.border}` : "none" }}>
+                                  <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 6 }}>{ex.name}</div>
+                                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                    {ex.sets.map(function(s, si) {
+                                      return (
+                                        <div key={si} style={{ background: "#111", border: `1px solid ${C.border}`, borderRadius: 6, padding: "4px 10px", fontSize: 12 }}>
+                                          <span style={{ color: C.muted2 }}>S{si+1} </span>
+                                          <span style={{ fontWeight: 700 }}>{s.reps}rep</span>
+                                          <span style={{ color: C.muted }}> · </span>
+                                          <span style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 15, color: C.accent }}>{s.weight}</span>
+                                          <span style={{ color: C.muted, fontSize: 10 }}>kg</span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
               </div>
             </div>
-          </>
+          </div>
         );
       }
 
       // ── TREINO VIEW ──
       return (
-        <>
+        <div>
           <style>{`@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@400;500;600;700&display=swap'); * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; } body { margin: 0; background: #0c0c0c; overflow-y: auto; } ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: #161616; } ::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; } input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; } input::placeholder { color: #3a3a3a; }`}</style>
           <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "'Barlow', sans-serif", maxWidth: 480, margin: "0 auto", position: "relative" }}>
 
@@ -264,7 +271,7 @@
 
             {/* DAY TABS */}
             <div style={{ display: "flex", background: C.surface, borderBottom: `1px solid ${C.border}`, overflowX: "auto" }}>
-              {DAYS.map((day) => {
+              {DAYS.map(function(day) {
                 const active = activeDay === day.key;
                 const count = (workouts[day.key] || []).length;
                 return (
@@ -293,32 +300,36 @@
                 </div>
               )}
 
-              {dayExercises.map((ex, exIdx) => (
-                <div key={ex.id} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, marginBottom: 12, overflow: "hidden" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", borderBottom: `1px solid ${C.border}`, background: C.surface2 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <div style={{ width: 26, height: 26, borderRadius: 6, background: C.accentDim, border: `1px solid ${C.accent}33`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bebas Neue', sans-serif", fontSize: 13, color: C.accentText, flexShrink: 0 }}>{exIdx + 1}</div>
-                      <span style={{ fontWeight: 700, fontSize: 15 }}>{ex.name}</span>
-                    </div>
-                    <div style={{ display: "flex", gap: 6 }}>
-                      <button onClick={() => openEdit(ex)} style={{ border: `1px solid ${C.border}`, background: "transparent", color: C.muted2, borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer", letterSpacing: 0.5 }}>EDITAR</button>
-                      <button onClick={() => setDeleteConfirm(ex.id)} style={{ border: "none", background: C.redDim, color: C.red, borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>✕</button>
-                    </div>
-                  </div>
-                  <div>
-                    <div style={{ display: "grid", gridTemplateColumns: "36px 1fr 1fr", padding: "6px 14px", borderBottom: `1px solid ${C.border}` }}>
-                      {["#", "REPS", "CARGA"].map((h) => <div key={h} style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.muted, textTransform: "uppercase" }}>{h}</div>)}
-                    </div>
-                    {ex.sets.map((set, si) => (
-                      <div key={si} style={{ display: "grid", gridTemplateColumns: "36px 1fr 1fr", padding: "10px 14px", borderBottom: si < ex.sets.length - 1 ? `1px solid ${C.border}` : "none", background: si % 2 === 0 ? "transparent" : "#1a1a1a", alignItems: "center" }}>
-                        <div style={{ fontSize: 11, color: C.muted, fontFamily: "monospace" }}>S{si + 1}</div>
-                        <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{set.reps}<span style={{ fontSize: 11, color: C.muted, marginLeft: 2 }}>rep</span></div>
-                        <div><span style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 22, color: C.accent, letterSpacing: 1 }}>{set.weight}</span><span style={{ fontSize: 10, color: C.muted, marginLeft: 2 }}>kg</span></div>
+              {dayExercises.map(function(ex, exIdx) {
+                return (
+                  <div key={ex.id} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, marginBottom: 12, overflow: "hidden" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", borderBottom: `1px solid ${C.border}`, background: C.surface2 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div style={{ width: 26, height: 26, borderRadius: 6, background: C.accentDim, border: `1px solid ${C.accent}33`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bebas Neue', sans-serif", fontSize: 13, color: C.accentText, flexShrink: 0 }}>{exIdx + 1}</div>
+                        <span style={{ fontWeight: 700, fontSize: 15 }}>{ex.name}</span>
                       </div>
-                    ))}
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button onClick={() => openEdit(ex)} style={{ border: `1px solid ${C.border}`, background: "transparent", color: C.muted2, borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer", letterSpacing: 0.5 }}>EDITAR</button>
+                        <button onClick={() => setDeleteConfirm(ex.id)} style={{ border: "none", background: C.redDim, color: C.red, borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>✕</button>
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ display: "grid", gridTemplateColumns: "36px 1fr 1fr", padding: "6px 14px", borderBottom: `1px solid ${C.border}` }}>
+                        {["#", "REPS", "CARGA"].map(function(h) { return <div key={h} style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.muted, textTransform: "uppercase" }}>{h}</div>; })}
+                      </div>
+                      {ex.sets.map(function(set, si) {
+                        return (
+                          <div key={si} style={{ display: "grid", gridTemplateColumns: "36px 1fr 1fr", padding: "10px 14px", borderBottom: si < ex.sets.length - 1 ? `1px solid ${C.border}` : "none", background: si % 2 === 0 ? "transparent" : "#1a1a1a", alignItems: "center" }}>
+                            <div style={{ fontSize: 11, color: C.muted, fontFamily: "monospace" }}>S{si + 1}</div>
+                            <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{set.reps}<span style={{ fontSize: 11, color: C.muted, marginLeft: 2 }}>rep</span></div>
+                            <div><span style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 22, color: C.accent, letterSpacing: 1 }}>{set.weight}</span><span style={{ fontSize: 10, color: C.muted, marginLeft: 2 }}>kg</span></div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             {/* BOTTOM BUTTONS */}
@@ -336,7 +347,7 @@
             {/* DELETE CONFIRM */}
             {deleteConfirm && (
               <div onClick={() => setDeleteConfirm(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-                <div onClick={(e) => e.stopPropagation()} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 18, padding: 24, width: "100%", maxWidth: 340, textAlign: "center" }}>
+                <div onClick={function(e) { e.stopPropagation(); }} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 18, padding: 24, width: "100%", maxWidth: 340, textAlign: "center" }}>
                   <div style={{ fontSize: 36, marginBottom: 12 }}>🗑️</div>
                   <div style={{ fontWeight: 700, fontSize: 17, marginBottom: 8 }}>Deletar exercício?</div>
                   <div style={{ fontSize: 13, color: C.muted2, marginBottom: 24 }}>Essa ação não pode ser desfeita.</div>
@@ -348,9 +359,9 @@
               </div>
             )}
 
-            {/* MODAL */}
+            {/* MODAL ADD/EDIT */}
             {modal && (
-              <div onClick={(e) => e.target === e.currentTarget && closeModal()} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+              <div onClick={function(e) { if (e.target === e.currentTarget) closeModal(); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
                 <div style={{ background: C.surface, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, padding: "24px 20px 32px", maxHeight: "90vh", overflowY: "auto", border: `1px solid ${C.border}`, borderBottom: "none" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 22 }}>
                     <div style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 26, letterSpacing: 3, color: C.accent }}>{modal === "edit" ? "EDITAR EXERCÍCIO" : "NOVO EXERCÍCIO"}</div>
@@ -358,7 +369,7 @@
                   </div>
                   <div style={{ marginBottom: 20 }}>
                     <label style={{ display: "block", fontSize: 10, fontWeight: 700, letterSpacing: 2, color: C.muted, textTransform: "uppercase", marginBottom: 7 }}>Nome do Exercício</label>
-                    <input style={{ width: "100%", background: "#111", border: `1px solid ${exerciseName.trim() ? C.accent + "55" : C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontSize: 15, outline: "none", fontFamily: "'Barlow', sans-serif" }} placeholder="Ex: Supino Reto, Rosca Direta..." value={exerciseName} onChange={(e) => setExerciseName(e.target.value)} />
+                    <input style={{ width: "100%", background: "#111", border: `1px solid ${exerciseName.trim() ? C.accent + "55" : C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontSize: 15, outline: "none", fontFamily: "'Barlow', sans-serif" }} placeholder="Ex: Supino Reto, Rosca Direta..." value={exerciseName} onChange={function(e) { setExerciseName(e.target.value); }} />
                   </div>
                   <div style={{ marginBottom: 16 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
@@ -366,92 +377,100 @@
                       <button onClick={addSet} style={{ background: C.accentDim, border: `1px solid ${C.accent}44`, color: C.accentText, borderRadius: 7, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow', sans-serif" }}>+ SÉRIE</button>
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "28px 1fr 1fr 28px", gap: 8, marginBottom: 6, paddingLeft: 4 }}>
-                      <div /><div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.muted, textTransform: "uppercase", textAlign: "center" }}>REPS</div>
-                      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.muted, textTransform: "uppercase", textAlign: "center" }}>CARGA (kg)</div><div />
+                      <div />
+                      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.muted, textTransform: "uppercase", textAlign: "center" }}>REPS</div>
+                      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.muted, textTransform: "uppercase", textAlign: "center" }}>CARGA (kg)</div>
+                      <div />
                     </div>
-                    {sets.map((set, i) => (
-                      <div key={i} style={{ display: "grid", gridTemplateColumns: "28px 1fr 1fr 28px", gap: 8, marginBottom: 8, alignItems: "center" }}>
-                        <div style={{ fontSize: 11, color: C.muted, fontFamily: "monospace", textAlign: "center" }}>S{i + 1}</div>
-                        <input type="number" min="0" style={{ background: "#111", border: `1px solid ${C.border}`, borderRadius: 8, padding: "11px 12px", color: C.text, fontSize: 15, outline: "none", fontFamily: "'Barlow', sans-serif", textAlign: "center", fontWeight: 700, width: "100%" }} placeholder="10" value={set.reps} onChange={(e) => updateSet(i, "reps", e.target.value)} />
-                        <input type="number" min="0" style={{ background: "#111", border: `1px solid ${C.border}`, borderRadius: 8, padding: "11px 12px", color: C.accent, fontSize: 15, outline: "none", fontFamily: "'Bebas Neue', Impact, sans-serif", textAlign: "center", letterSpacing: 1, width: "100%" }} placeholder="60" value={set.weight} onChange={(e) => updateSet(i, "weight", e.target.value)} />
-                        <button onClick={() => removeSet(i)} style={{ background: "transparent", border: "none", color: sets.length > 1 ? C.muted : "#2a2a2a", fontSize: 16, cursor: sets.length > 1 ? "pointer" : "default", padding: 0, lineHeight: 1 }}>✕</button>
-                      </div>
-                    ))}
+                    {sets.map(function(set, i) {
+                      return (
+                        <div key={i} style={{ display: "grid", gridTemplateColumns: "28px 1fr 1fr 28px", gap: 8, marginBottom: 8, alignItems: "center" }}>
+                          <div style={{ fontSize: 11, color: C.muted, fontFamily: "monospace", textAlign: "center" }}>S{i + 1}</div>
+                          <input type="number" min="0" style={{ background: "#111", border: `1px solid ${C.border}`, borderRadius: 8, padding: "11px 12px", color: C.text, fontSize: 15, outline: "none", fontFamily: "'Barlow', sans-serif", textAlign: "center", fontWeight: 700, width: "100%" }} placeholder="10" value={set.reps} onChange={function(e) { updateSet(i, "reps", e.target.value); }} />
+                          <input type="number" min="0" style={{ background: "#111", border: `1px solid ${C.border}`, borderRadius: 8, padding: "11px 12px", color: C.accent, fontSize: 15, outline: "none", fontFamily: "'Bebas Neue', Impact, sans-serif", textAlign: "center", letterSpacing: 1, width: "100%" }} placeholder="60" value={set.weight} onChange={function(e) { updateSet(i, "weight", e.target.value); }} />
+                          <button onClick={function() { removeSet(i); }} style={{ background: "transparent", border: "none", color: sets.length > 1 ? C.muted : "#2a2a2a", fontSize: 16, cursor: sets.length > 1 ? "pointer" : "default", padding: 0, lineHeight: 1 }}>✕</button>
+                        </div>
+                      );
+                    })}
                   </div>
-                  <button onClick={saveExercise} style={{ width: "100%", background: exerciseName.trim() && sets.some(s => s.reps && s.weight) ? C.accent : "#2a2a2a", color: exerciseName.trim() && sets.some(s => s.reps && s.weight) ? "#000" : C.muted, border: "none", borderRadius: 13, padding: "16px", fontSize: 15, fontWeight: 800, letterSpacing: 1.5, cursor: "pointer", marginBottom: 10, fontFamily: "'Barlow', sans-serif" }}>SALVAR EXERCÍCIO</button>
+                  <button onClick={saveExercise} style={{ width: "100%", background: exerciseName.trim() && sets.some(function(s) { return s.reps && s.weight; }) ? C.accent : "#2a2a2a", color: exerciseName.trim() && sets.some(function(s) { return s.reps && s.weight; }) ? "#000" : C.muted, border: "none", borderRadius: 13, padding: "16px", fontSize: 15, fontWeight: 800, letterSpacing: 1.5, cursor: "pointer", marginBottom: 10, fontFamily: "'Barlow', sans-serif" }}>SALVAR EXERCÍCIO</button>
                   <button onClick={closeModal} style={{ width: "100%", background: "transparent", color: C.muted, border: `1px solid ${C.border}`, borderRadius: 13, padding: "14px", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "'Barlow', sans-serif" }}>Cancelar</button>
                 </div>
               </div>
             )}
 
-          {/* FLOATING TIMER BUTTON */}
-          <button
-            onClick={() => setTimerOpen(o => !o)}
-            style={{
-              position: "fixed", bottom: 100, right: 16, zIndex: 300,
-              width: 52, height: 52, borderRadius: "50%",
-              background: timerRunning ? C.accent : C.surface2,
-              border: `2px solid ${timerRunning ? C.accent : C.border}`,
-              color: timerRunning ? "#000" : C.muted2,
-              fontSize: 22, cursor: "pointer", display: "flex",
-              alignItems: "center", justifyContent: "center",
-              boxShadow: timerRunning ? `0 0 20px ${C.accent}55` : "0 4px 16px rgba(0,0,0,0.5)",
-              transition: "all 0.2s",
-            }}
-          >⏱</button>
+            {/* FLOATING TIMER BUTTON */}
+            <button
+              onClick={function() { setTimerOpen(function(o) { return !o; }); }}
+              style={{
+                position: "fixed", bottom: 100, right: 16, zIndex: 300,
+                width: 52, height: 52, borderRadius: "50%",
+                background: timerRunning ? C.accent : C.surface2,
+                border: `2px solid ${timerRunning ? C.accent : C.border}`,
+                color: timerRunning ? "#000" : C.muted2,
+                fontSize: 22, cursor: "pointer", display: "flex",
+                alignItems: "center", justifyContent: "center",
+                boxShadow: timerRunning ? `0 0 20px ${C.accent}55` : "0 4px 16px rgba(0,0,0,0.5)",
+                transition: "all 0.2s",
+              }}
+            >⏱</button>
 
-          {/* TIMER PANEL */}
-          {timerOpen && (
-            <div style={{
-              position: "fixed", bottom: 162, right: 16, zIndex: 300,
-              background: C.surface, border: `1px solid ${timerRunning ? C.accent + "66" : C.border}`,
-              borderRadius: 18, padding: "18px 20px 16px",
-              boxShadow: `0 8px 32px rgba(0,0,0,0.6)`,
-              minWidth: 180, textAlign: "center",
-              transition: "border-color 0.2s",
-            }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.muted, textTransform: "uppercase" }}>CRONÔMETRO</span>
-                <button onClick={() => setTimerOpen(false)} style={{ background: "transparent", border: "none", color: C.muted, fontSize: 14, cursor: "pointer", lineHeight: 1, padding: 0 }}>✕</button>
-              </div>
+            {/* TIMER PANEL */}
+            {timerOpen && (
               <div style={{
-                fontFamily: "'Bebas Neue', Impact, sans-serif",
-                fontSize: 52, letterSpacing: 4,
-                color: timerRunning ? C.accent : C.text,
-                lineHeight: 1, marginBottom: 14,
-                transition: "color 0.2s",
+                position: "fixed", bottom: 162, right: 16, zIndex: 300,
+                background: C.surface, border: `1px solid ${timerRunning ? C.accent + "66" : C.border}`,
+                borderRadius: 18, padding: "18px 20px 16px",
+                boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
+                minWidth: 180, textAlign: "center",
+                transition: "border-color 0.2s",
               }}>
-                {String(Math.floor(timerSeconds / 60)).padStart(2, "0")}:{String(timerSeconds % 60).padStart(2, "0")}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.muted, textTransform: "uppercase" }}>CRONÔMETRO</span>
+                  <button onClick={function() { setTimerOpen(false); }} style={{ background: "transparent", border: "none", color: C.muted, fontSize: 14, cursor: "pointer", lineHeight: 1, padding: 0 }}>✕</button>
+                </div>
+                <div style={{
+                  fontFamily: "'Bebas Neue', Impact, sans-serif",
+                  fontSize: 52, letterSpacing: 4,
+                  color: timerRunning ? C.accent : C.text,
+                  lineHeight: 1, marginBottom: 14,
+                  transition: "color 0.2s",
+                }}>
+                  {String(Math.floor(timerSeconds / 60)).padStart(2, "0")}:{String(timerSeconds % 60).padStart(2, "0")}
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={function() { setTimerRunning(function(r) { return !r; }); }}
+                    style={{
+                      flex: 1, background: timerRunning ? C.redDim : C.accentDim,
+                      border: `1px solid ${timerRunning ? C.red + "66" : C.accent + "66"}`,
+                      color: timerRunning ? C.red : C.accentText,
+                      borderRadius: 10, padding: "10px 0", fontSize: 11,
+                      fontWeight: 800, letterSpacing: 1, cursor: "pointer",
+                      fontFamily: "'Barlow', sans-serif",
+                    }}
+                  >{timerRunning ? "⏸ PAUSAR" : "▶ INICIAR"}</button>
+                  <button
+                    onClick={function() { setTimerSeconds(0); setTimerRunning(false); }}
+                    style={{
+                      background: "transparent", border: `1px solid ${C.border}`,
+                      color: C.muted, borderRadius: 10, padding: "10px 12px",
+                      fontSize: 11, fontWeight: 700, cursor: "pointer",
+                      fontFamily: "'Barlow', sans-serif",
+                    }}
+                  >↺</button>
+                </div>
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  onClick={() => setTimerRunning(r => !r)}
-                  style={{
-                    flex: 1, background: timerRunning ? C.redDim : C.accentDim,
-                    border: `1px solid ${timerRunning ? C.red + "66" : C.accent + "66"}`,
-                    color: timerRunning ? C.red : C.accentText,
-                    borderRadius: 10, padding: "10px 0", fontSize: 11,
-                    fontWeight: 800, letterSpacing: 1, cursor: "pointer",
-                    fontFamily: "'Barlow', sans-serif",
-                  }}
-                >{timerRunning ? "⏸ PAUSAR" : "▶ INICIAR"}</button>
-                <button
-                  onClick={() => { setTimerSeconds(0); setTimerRunning(false); }}
-                  style={{
-                    background: "transparent", border: `1px solid ${C.border}`,
-                    color: C.muted, borderRadius: 10, padding: "10px 12px",
-                    fontSize: 11, fontWeight: 700, cursor: "pointer",
-                    fontFamily: "'Barlow', sans-serif",
-                  }}
-                >↺</button>
-              </div>
-            </div>
-          )}
+            )}
 
-        </>
+          </div>
+        </div>
       );
-      
-    ReactDOM.createRoot(document.getElementById('root')).render(<GymLog />);
+    }
+
+    const container = document.getElementById('root');
+    const root = ReactDOM.createRoot(container);
+    root.render(<GymLog />);
   </script>
 </body>
 </html>
