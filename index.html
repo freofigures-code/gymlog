@@ -79,9 +79,20 @@
       const [deleteConfirm, setDeleteConfirm] = useState(null);
       const [view, setView] = useState("treino"); // "treino" | "historico"
       const [exerciseName, setExerciseName] = useState("");
+      const [timerSeconds, setTimerSeconds] = useState(0);
+      const [timerRunning, setTimerRunning] = useState(false);
+      const [timerOpen, setTimerOpen] = useState(false);
       const [sets, setSets] = useState([{ reps: "", weight: "" }]);
 
       useEffect(() => { loadData(); }, []);
+
+      useEffect(() => {
+        if (!timerRunning) return;
+        const interval = setInterval(() => {
+          setTimerSeconds(s => s + 1);
+        }, 1000);
+        return () => clearInterval(interval);
+      }, [timerRunning]);
 
       const loadData = async () => {
         try {
@@ -373,9 +384,74 @@
               </div>
             )}
           </div>
+
+          {/* FLOATING TIMER BUTTON */}
+          <button
+            onClick={() => setTimerOpen(o => !o)}
+            style={{
+              position: "fixed", bottom: 100, right: 16, zIndex: 300,
+              width: 52, height: 52, borderRadius: "50%",
+              background: timerRunning ? C.accent : C.surface2,
+              border: `2px solid ${timerRunning ? C.accent : C.border}`,
+              color: timerRunning ? "#000" : C.muted2,
+              fontSize: 22, cursor: "pointer", display: "flex",
+              alignItems: "center", justifyContent: "center",
+              boxShadow: timerRunning ? `0 0 20px ${C.accent}55` : "0 4px 16px rgba(0,0,0,0.5)",
+              transition: "all 0.2s",
+            }}
+          >⏱</button>
+
+          {/* TIMER PANEL */}
+          {timerOpen && (
+            <div style={{
+              position: "fixed", bottom: 162, right: 16, zIndex: 300,
+              background: C.surface, border: `1px solid ${timerRunning ? C.accent + "66" : C.border}`,
+              borderRadius: 18, padding: "18px 20px 16px",
+              boxShadow: `0 8px 32px rgba(0,0,0,0.6)`,
+              minWidth: 180, textAlign: "center",
+              transition: "border-color 0.2s",
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.muted, textTransform: "uppercase" }}>CRONÔMETRO</span>
+                <button onClick={() => setTimerOpen(false)} style={{ background: "transparent", border: "none", color: C.muted, fontSize: 14, cursor: "pointer", lineHeight: 1, padding: 0 }}>✕</button>
+              </div>
+              <div style={{
+                fontFamily: "'Bebas Neue', Impact, sans-serif",
+                fontSize: 52, letterSpacing: 4,
+                color: timerRunning ? C.accent : C.text,
+                lineHeight: 1, marginBottom: 14,
+                transition: "color 0.2s",
+              }}>
+                {String(Math.floor(timerSeconds / 60)).padStart(2, "0")}:{String(timerSeconds % 60).padStart(2, "0")}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={() => setTimerRunning(r => !r)}
+                  style={{
+                    flex: 1, background: timerRunning ? C.redDim : C.accentDim,
+                    border: `1px solid ${timerRunning ? C.red + "66" : C.accent + "66"}`,
+                    color: timerRunning ? C.red : C.accentText,
+                    borderRadius: 10, padding: "10px 0", fontSize: 11,
+                    fontWeight: 800, letterSpacing: 1, cursor: "pointer",
+                    fontFamily: "'Barlow', sans-serif",
+                  }}
+                >{timerRunning ? "⏸ PAUSAR" : "▶ INICIAR"}</button>
+                <button
+                  onClick={() => { setTimerSeconds(0); setTimerRunning(false); }}
+                  style={{
+                    background: "transparent", border: `1px solid ${C.border}`,
+                    color: C.muted, borderRadius: 10, padding: "10px 12px",
+                    fontSize: 11, fontWeight: 700, cursor: "pointer",
+                    fontFamily: "'Barlow', sans-serif",
+                  }}
+                >↺</button>
+              </div>
+            </div>
+          )}
+
+        </div>
         </>
       );
-    }
 
     ReactDOM.createRoot(document.getElementById('root')).render(<GymLog />);
   </script>
