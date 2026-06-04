@@ -1,14 +1,13 @@
 const http = require("http");
 const https = require("https");
-
 const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.CLAUDE_API_KEY || "";
 
 const server = http.createServer(function(req, res) {
-  // CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Max-Age", "86400");
 
   if (req.method === "OPTIONS") {
     res.writeHead(204);
@@ -16,8 +15,7 @@ const server = http.createServer(function(req, res) {
     return;
   }
 
-  // Health check
-  if (req.method === "GET" && req.url === "/health") {
+  if (req.url === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ status: "ok" }));
     return;
@@ -83,10 +81,8 @@ const server = http.createServer(function(req, res) {
   });
 });
 
-// FIX CRÍTICO: aumenta keepAliveTimeout para evitar "Failed to fetch"
-// com reverse proxies como Traefik/EasyPanel
-server.keepAliveTimeout = 185 * 1000; // 61 segundos
-server.headersTimeout = 190 * 1000;   // sempre maior que keepAliveTimeout
+server.keepAliveTimeout = 185 * 1000;
+server.headersTimeout = 190 * 1000;
 
 server.listen(PORT, function() {
   console.log("GymLog API rodando na porta " + PORT);
