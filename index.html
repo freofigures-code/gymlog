@@ -25,7 +25,6 @@
   <div id="root"></div>
 
   <script>
-    // Registro do Service Worker
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
         .then(function(reg) {
@@ -33,34 +32,35 @@
           reg.addEventListener('updatefound', function() {
             var newSW = reg.installing;
             newSW.addEventListener('statechange', function() {
-              if (newSW.state === 'activated') {
-                window.location.reload();
-              }
+              if (newSW.state === 'activated') { window.location.reload(); }
             });
           });
-        })
-        .catch(console.error);
+        }).catch(console.error);
     }
 
-    // Storage wrapper usando localStorage
+    // ─── COLOQUE SUA CHAVE DA API AQUI ───────────────────────────────────────
+    // 1. Acesse https://console.anthropic.com
+    // 2. Clique em "API Keys" → "Create Key"
+    // 3. Cole a chave entre as aspas abaixo (começa com "sk-ant-...")
+    window.CLAUDE_API_KEY = "COLOQUE_SUA_CHAVE_AQUI";
+    // ─────────────────────────────────────────────────────────────────────────
+
     window.storage = {
       get: async function(key) {
-        try {
-          var v = localStorage.getItem(key);
-          return v !== null ? { key: key, value: v } : null;
-        } catch(e) { return null; }
+        try { var v = localStorage.getItem(key); return v !== null ? { key: key, value: v } : null; } catch(e) { return null; }
       },
       set: async function(key, value) {
-        try {
-          localStorage.setItem(key, value);
-          return { key: key, value: value };
-        } catch(e) { return null; }
+        try { localStorage.setItem(key, value); return { key: key, value: value }; } catch(e) { return null; }
       },
     };
   </script>
 
   <script type="text/babel">
-    const { useState, useEffect } = React;
+    const { useState, useEffect, useRef } = React;
+
+    // ── Dia da semana atual ──
+    const WEEKDAY_MAP = { 0: "dom", 1: "seg", 2: "ter", 3: "qua", 4: "qui", 5: "sex", 6: "sab" };
+    function getTodayKey() { return WEEKDAY_MAP[new Date().getDay()] || "seg"; }
 
     const DAYS = [
       { key: "seg", label: "SEG", full: "Segunda-feira" },
@@ -75,68 +75,157 @@
       bg: "#0c0c0c", surface: "#161616", surface2: "#1e1e1e", border: "#272727",
       accent: "#C8FF3E", accentDim: "#C8FF3E18", accentText: "#9dcc00",
       text: "#f2f2f2", muted: "#555", muted2: "#888", red: "#ff4b4b", redDim: "#ff4b4b18",
-      blue: "#3E9CFF", blueDim: "#3E9CFF18",
+      blue: "#3E9CFF", blueDim: "#3E9CFF18", purple: "#a78bfa", purpleDim: "#a78bfa18",
+      orange: "#fb923c", orangeDim: "#fb923c18",
     };
 
-    const STORAGE_KEY = "gymlog-workouts-v1";
-    const HISTORY_KEY = "gymlog-history-v1";
+    const STORAGE_KEY   = "gymlog-workouts-v1";
+    const HISTORY_KEY   = "gymlog-history-v1";
+    const FEELINGS_KEY  = "gymlog-feelings-v1";
+
+    // disposição: início do treino
+    const ENERGY_OPTIONS = [
+      { value: 1, emoji: "😴", label: "Mal dormido" },
+      { value: 2, emoji: "😐", label: "Normal" },
+      { value: 3, emoji: "💪", label: "Bem" },
+      { value: 4, emoji: "🔥", label: "Com vontade" },
+      { value: 5, emoji: "⚡", label: "Pra destruir" },
+    ];
+
+    // resultado: fim do treino
+    const RESULT_OPTIONS = [
+      { value: 1, emoji: "👎", label: "Abaixo do esperado" },
+      { value: 2, emoji: "😐", label: "Mediano" },
+      { value: 3, emoji: "👍", label: "Como planejado" },
+      { value: 4, emoji: "💥", label: "Acima do esperado" },
+      { value: 5, emoji: "🚀", label: "Superei demais" },
+    ];
 
     function formatDate(iso) {
       const d = new Date(iso + "T00:00:00");
       return d.toLocaleDateString("pt-BR", { weekday: "short", day: "numeric", month: "short" });
     }
 
-    function todayISO() {
-      return new Date().toISOString().slice(0, 10);
+    function todayISO() { return new Date().toISOString().slice(0, 10); }
+
+    // Calcula progressão de carga comparando com entrada anterior do mesmo exercício
+    function getProgression(exName, currentSets, history) {
+      for (let i = 0; i < history.length; i++) {
+        const entry = history[i];
+        const found = entry.exercises.find(function(e) { return e.name === exName; });
+        if (found) {
+          const prevMax = Math.max(...found.sets.map(function(s) { return s.weight; }));
+          const currMax = Math.max(...currentSets.map(function(s) { return s.weight; }));
+          if (currMax > prevMax) return { type: "up", diff: currMax - prevMax };
+          if (currMax < prevMax) return { type: "down", diff: prevMax - currMax };
+          return { type: "equal" };
+        }
+      }
+      return null;
     }
 
+    // ── COMPONENTE PRINCIPAL ──
     function GymLog() {
-      const [workouts, setWorkouts] = useState({});
-      const [history, setHistory] = useState([]);
-      const [activeDay, setActiveDay] = useState("seg");
-      const [modal, setModal] = useState(null);
-      const [editId, setEditId] = useState(null);
-      const [loading, setLoading] = useState(true);
-      const [saving, setSaving] = useState(false);
+      const [workouts, setWorkouts]         = useState({});
+      const [history, setHistory]           = useState([]);
+      const [feelings, setFeelings]         = useState({}); // { "2025-06-01": { energy: 4, result: 5 } }
+      const [activeDay, setActiveDay]       = useState(getTodayKey());
+      const [modal, setModal]               = useState(null); // "add"|"edit"|"energy"|"result"|"ai"
+      const [editId, setEditId]             = useState(null);
+      const [loading, setLoading]           = useState(true);
+      const [saving, setSaving]             = useState(false);
       const [deleteConfirm, setDeleteConfirm] = useState(null);
-      const [view, setView] = useState("treino");
+      const [view, setView]                 = useState("treino");
       const [exerciseName, setExerciseName] = useState("");
       const [timerSeconds, setTimerSeconds] = useState(0);
       const [timerRunning, setTimerRunning] = useState(false);
-      const [timerOpen, setTimerOpen] = useState(false);
-      const [sets, setSets] = useState([{ reps: "", weight: "" }]);
+      const [timerOpen, setTimerOpen]       = useState(false);
+      const [sets, setSets]                 = useState([{ reps: "", weight: "" }]);
+      const [aiReport, setAiReport]         = useState("");
+      const [aiLoading, setAiLoading]       = useState(false);
+      const [aiError, setAiError]           = useState("");
+      const [todayEnergy, setTodayEnergy]   = useState(null);
+      const [todayResult, setTodayResult]   = useState(null);
 
-      useEffect(() => { loadData(); }, []);
+      useEffect(function() { loadData(); }, []);
 
-      useEffect(() => {
+      useEffect(function() {
         if (!timerRunning) return;
-        const interval = setInterval(() => {
+        const interval = setInterval(function() {
           setTimerSeconds(function(s) { return s + 1; });
         }, 1000);
-        return () => clearInterval(interval);
+        return function() { clearInterval(interval); };
       }, [timerRunning]);
 
-      const loadData = async () => {
+      // Carrega disposição do dia ao mudar de dia
+      useEffect(function() {
+        const today = todayISO();
+        if (feelings[today]) {
+          setTodayEnergy(feelings[today].energy || null);
+          setTodayResult(feelings[today].result || null);
+        } else {
+          setTodayEnergy(null);
+          setTodayResult(null);
+        }
+      }, [feelings]);
+
+      const loadData = async function() {
         try {
           const r1 = await window.storage.get(STORAGE_KEY);
           if (r1) setWorkouts(JSON.parse(r1.value));
           const r2 = await window.storage.get(HISTORY_KEY);
           if (r2) setHistory(JSON.parse(r2.value));
-        } catch (_) {}
+          const r3 = await window.storage.get(FEELINGS_KEY);
+          if (r3) {
+            const f = JSON.parse(r3.value);
+            setFeelings(f);
+            const today = todayISO();
+            if (f[today]) {
+              setTodayEnergy(f[today].energy || null);
+              setTodayResult(f[today].result || null);
+            }
+          }
+        } catch(_) {}
         setLoading(false);
       };
 
-      const saveWorkouts = async (data) => {
+      const saveWorkouts = async function(data) {
         setSaving(true);
-        try { await window.storage.set(STORAGE_KEY, JSON.stringify(data)); } catch (e) {}
-        setTimeout(() => setSaving(false), 600);
+        try { await window.storage.set(STORAGE_KEY, JSON.stringify(data)); } catch(e) {}
+        setTimeout(function() { setSaving(false); }, 600);
       };
 
-      const saveHistory = async (data) => {
-        try { await window.storage.set(HISTORY_KEY, JSON.stringify(data)); } catch (e) {}
+      const saveHistory = async function(data) {
+        try { await window.storage.set(HISTORY_KEY, JSON.stringify(data)); } catch(e) {}
       };
 
-      const finishWorkout = async () => {
+      const saveFeelings = async function(data) {
+        try { await window.storage.set(FEELINGS_KEY, JSON.stringify(data)); } catch(e) {}
+      };
+
+      // Salva disposição inicial
+      const saveEnergy = async function(value) {
+        const today = todayISO();
+        const updated = { ...feelings, [today]: { ...(feelings[today] || {}), energy: value } };
+        setFeelings(updated);
+        setTodayEnergy(value);
+        await saveFeelings(updated);
+        setModal(null);
+      };
+
+      // Salva resultado final + pergunta se quer finalizar
+      const saveResult = async function(value) {
+        const today = todayISO();
+        const updated = { ...feelings, [today]: { ...(feelings[today] || {}), result: value } };
+        setFeelings(updated);
+        setTodayResult(value);
+        await saveFeelings(updated);
+        setModal(null);
+        // Agora finaliza o treino de verdade
+        await doFinishWorkout();
+      };
+
+      const doFinishWorkout = async function() {
         const exs = workouts[activeDay] || [];
         if (exs.length === 0) return;
         const today = todayISO();
@@ -147,21 +236,133 @@
         alert("✅ Treino salvo no histórico!");
       };
 
+      // Ao clicar em finalizar: primeiro pede disposição inicial se não tiver, depois resultado
+      const finishWorkout = function() {
+        const exs = workouts[activeDay] || [];
+        if (exs.length === 0) return;
+        if (!todayEnergy) {
+          // Pede disposição inicial antes
+          setModal("energy_then_result");
+        } else {
+          setModal("result");
+        }
+      };
+
+      // ── ANÁLISE DA IA ──
+      const generateAIReport = async function() {
+        const apiKey = window.CLAUDE_API_KEY;
+        if (!apiKey || apiKey === "COLOQUE_SUA_CHAVE_AQUI") {
+          setAiError("⚠️ Chave da API não configurada. Edite o index.html e insira sua chave em window.CLAUDE_API_KEY.");
+          return;
+        }
+
+        setAiLoading(true);
+        setAiError("");
+        setAiReport("");
+
+        try {
+          // Últimos 7 dias de histórico
+          const sevenDaysAgo = new Date();
+          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+          const recentHistory = history.filter(function(h) {
+            return new Date(h.date + "T00:00:00") >= sevenDaysAgo;
+          });
+
+          // Progressão de cada exercício
+          const progressionData = [];
+          recentHistory.forEach(function(entry) {
+            entry.exercises.forEach(function(ex) {
+              const prog = getProgression(ex.name, ex.sets, history.filter(function(h) { return h.date < entry.date; }));
+              progressionData.push({
+                data: entry.date,
+                dia: entry.day,
+                exercicio: ex.name,
+                series: ex.sets,
+                progressao: prog
+              });
+            });
+          });
+
+          // Sentimentos da semana
+          const feelingsData = [];
+          Object.keys(feelings).forEach(function(date) {
+            const d = new Date(date + "T00:00:00");
+            if (d >= sevenDaysAgo) {
+              feelingsData.push({ data: date, ...feelings[date] });
+            }
+          });
+
+          const prompt = `Você é um personal trainer experiente analisando os dados de treino da semana do atleta. Seja direto, motivador e técnico como um bom PT faria. Use linguagem informal mas profissional. Máximo 400 palavras.
+
+DADOS DA SEMANA (últimos 7 dias):
+
+TREINOS E EXERCÍCIOS:
+${JSON.stringify(progressionData, null, 2)}
+
+DISPOSIÇÃO E RESULTADO DOS TREINOS:
+${JSON.stringify(feelingsData.map(function(f) {
+  const energyLabel = ENERGY_OPTIONS.find(function(e) { return e.value === f.energy; });
+  const resultLabel = RESULT_OPTIONS.find(function(r) { return r.value === f.result; });
+  return {
+    data: f.data,
+    disposicao_inicial: energyLabel ? energyLabel.emoji + " " + energyLabel.label : "não registrado",
+    resultado_final: resultLabel ? resultLabel.emoji + " " + resultLabel.label : "não registrado"
+  };
+}), null, 2)}
+
+Analise:
+1. Evolução de cargas (quais exercícios progrediram, estagnaram ou regrediram)
+2. Relação entre disposição inicial e resultado final (quando treinou mal disposto mas foi bem, ou vice-versa)
+3. Volume e frequência da semana
+4. 2-3 recomendações práticas e objetivas para a próxima semana
+5. Uma frase motivacional no final
+
+Responda em português brasileiro.`;
+
+          const response = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": apiKey,
+              "anthropic-version": "2023-06-01",
+              "anthropic-dangerous-direct-browser-calls": "true"
+            },
+            body: JSON.stringify({
+              model: "claude-haiku-4-5-20251001",
+              max_tokens: 1024,
+              messages: [{ role: "user", content: prompt }]
+            })
+          });
+
+          if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error ? err.error.message : "Erro na API");
+          }
+
+          const data = await response.json();
+          const text = data.content && data.content[0] ? data.content[0].text : "Sem resposta.";
+          setAiReport(text);
+        } catch(e) {
+          setAiError("❌ Erro: " + e.message);
+        }
+        setAiLoading(false);
+      };
+
       const dayExercises = workouts[activeDay] || [];
       const currentDay = DAYS.find(function(d) { return d.key === activeDay; });
+      const todayKey = getTodayKey();
+      const todayFeelingData = feelings[todayISO()] || {};
 
-      const openAdd = () => { setEditId(null); setExerciseName(""); setSets([{ reps: "", weight: "" }]); setModal("add"); };
-      const openEdit = (ex) => { setEditId(ex.id); setExerciseName(ex.name); setSets(ex.sets.map(function(s) { return { reps: String(s.reps), weight: String(s.weight) }; })); setModal("edit"); };
-      const closeModal = () => { setModal(null); setEditId(null); };
-      const addSet = () => setSets(function(prev) { return [...prev, { reps: "", weight: "" }]; });
-      const removeSet = (i) => { if (sets.length > 1) setSets(sets.filter(function(_, idx) { return idx !== i; })); };
-      const updateSet = (i, field, val) => { const n = [...sets]; n[i] = { ...n[i], [field]: val }; setSets(n); };
+      const openAdd = function() { setEditId(null); setExerciseName(""); setSets([{ reps: "", weight: "" }]); setModal("add"); };
+      const openEdit = function(ex) { setEditId(ex.id); setExerciseName(ex.name); setSets(ex.sets.map(function(s) { return { reps: String(s.reps), weight: String(s.weight) }; })); setModal("edit"); };
+      const closeModal = function() { setModal(null); setEditId(null); };
+      const addSet = function() { setSets(function(prev) { return [...prev, { reps: "", weight: "" }]; }); };
+      const removeSet = function(i) { if (sets.length > 1) setSets(sets.filter(function(_, idx) { return idx !== i; })); };
+      const updateSet = function(i, field, val) { const n = [...sets]; n[i] = { ...n[i], [field]: val }; setSets(n); };
 
-      const saveExercise = async () => {
+      const saveExercise = async function() {
         if (!exerciseName.trim()) return;
-        const validSets = sets
-          .filter(function(s) { return s.reps !== "" && s.weight !== ""; })
-          .map(function(s) { return { reps: Number(s.reps), weight: Number(s.weight) }; });
+        const validSets = sets.filter(function(s) { return s.reps !== "" && s.weight !== ""; }).map(function(s) { return { reps: Number(s.reps), weight: Number(s.weight) }; });
         if (validSets.length === 0) return;
         const updated = { ...workouts };
         const list = [...(updated[activeDay] || [])];
@@ -177,7 +378,7 @@
         closeModal();
       };
 
-      const confirmDelete = async (id) => {
+      const confirmDelete = async function(id) {
         const updated = { ...workouts };
         updated[activeDay] = (updated[activeDay] || []).filter(function(e) { return e.id !== id; });
         setWorkouts(updated);
@@ -185,9 +386,8 @@
         setDeleteConfirm(null);
       };
 
-      const totalSetsForDay = (key) => (workouts[key] || []).reduce(function(acc, ex) { return acc + ex.sets.length; }, 0);
+      const totalSetsForDay = function(key) { return (workouts[key] || []).reduce(function(acc, ex) { return acc + ex.sets.length; }, 0); };
 
-      // ── LOADING ──
       if (loading) {
         return (
           <div style={{ minHeight: "100vh", background: C.bg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
@@ -197,23 +397,23 @@
         );
       }
 
-      // ── HISTÓRICO VIEW ──
+      // ── VIEW HISTÓRICO ──
       if (view === "historico") {
         const grouped = {};
-        history.forEach(function(h) {
-          if (!grouped[h.date]) grouped[h.date] = [];
-          grouped[h.date].push(h);
-        });
+        history.forEach(function(h) { if (!grouped[h.date]) grouped[h.date] = []; grouped[h.date].push(h); });
         const dates = Object.keys(grouped).sort(function(a, b) { return b.localeCompare(a); });
 
         return (
           <div>
-            <style>{`@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@400;500;600;700&display=swap'); * { box-sizing: border-box; } body { margin: 0; background: #0c0c0c; overflow-y: auto; } input::placeholder { color: #3a3a3a; }`}</style>
+            <style>{`@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@400;500;600;700&display=swap'); * { box-sizing: border-box; } body { margin: 0; background: #0c0c0c; overflow-y: auto; }`}</style>
             <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "'Barlow', sans-serif", maxWidth: 480, margin: "0 auto" }}>
               <div style={{ padding: "22px 20px 16px", background: C.surface, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, zIndex: 10 }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <div style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 40, letterSpacing: 4, color: C.accent, lineHeight: 1 }}>HISTÓRICO</div>
-                  <button onClick={() => setView("treino")} style={{ background: C.accentDim, border: `1px solid ${C.accent}44`, color: C.accentText, borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow', sans-serif", letterSpacing: 1 }}>← TREINO</button>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={function() { setAiReport(""); setAiError(""); setModal("ai"); }} style={{ background: C.purpleDim, border: `1px solid ${C.purple}44`, color: C.purple, borderRadius: 8, padding: "8px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow', sans-serif", letterSpacing: 1 }}>🤖 IA</button>
+                    <button onClick={function() { setView("treino"); }} style={{ background: C.accentDim, border: `1px solid ${C.accent}44`, color: C.accentText, borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow', sans-serif", letterSpacing: 1 }}>← TREINO</button>
+                  </div>
                 </div>
               </div>
               <div style={{ padding: "16px", paddingBottom: 40 }}>
@@ -225,10 +425,19 @@
                   </div>
                 )}
                 {dates.map(function(date) {
+                  const dayFeelings = feelings[date] || {};
+                  const energyOpt = ENERGY_OPTIONS.find(function(e) { return e.value === dayFeelings.energy; });
+                  const resultOpt = RESULT_OPTIONS.find(function(r) { return r.value === dayFeelings.result; });
                   return (
                     <div key={date} style={{ marginBottom: 24 }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: C.accentText, textTransform: "uppercase", marginBottom: 10, paddingLeft: 2 }}>
-                        📅 {formatDate(date)}
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, paddingLeft: 2 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: C.accentText, textTransform: "uppercase" }}>📅 {formatDate(date)}</div>
+                        {(energyOpt || resultOpt) && (
+                          <div style={{ display: "flex", gap: 6, fontSize: 13 }}>
+                            {energyOpt && <span title={energyOpt.label}>{energyOpt.emoji}</span>}
+                            {resultOpt && <span title={resultOpt.label}>{resultOpt.emoji}</span>}
+                          </div>
+                        )}
                       </div>
                       {grouped[date].map(function(entry, ei) {
                         const dayLabel = DAYS.find(function(d) { return d.key === entry.day; });
@@ -239,9 +448,17 @@
                               <span style={{ fontSize: 11, color: C.muted, marginLeft: 8 }}>{entry.exercises.length} exercício{entry.exercises.length !== 1 ? "s" : ""}</span>
                             </div>
                             {entry.exercises.map(function(ex, xi) {
+                              // Progressão em relação ao treino anterior
+                              const olderHistory = history.filter(function(h) { return h.date < entry.date; });
+                              const prog = getProgression(ex.name, ex.sets, olderHistory);
                               return (
                                 <div key={xi} style={{ padding: "10px 14px", borderBottom: xi < entry.exercises.length - 1 ? `1px solid ${C.border}` : "none" }}>
-                                  <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 6 }}>{ex.name}</div>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                                    <div style={{ fontWeight: 700, fontSize: 14 }}>{ex.name}</div>
+                                    {prog && prog.type === "up" && <span style={{ fontSize: 11, color: C.accent, fontWeight: 700 }}>↑ +{prog.diff}kg</span>}
+                                    {prog && prog.type === "down" && <span style={{ fontSize: 11, color: C.red, fontWeight: 700 }}>↓ -{prog.diff}kg</span>}
+                                    {prog && prog.type === "equal" && <span style={{ fontSize: 11, color: C.muted2 }}>= mesmo peso</span>}
+                                  </div>
                                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                                     {ex.sets.map(function(s, si) {
                                       return (
@@ -266,27 +483,85 @@
                 })}
               </div>
             </div>
+
+            {/* MODAL IA */}
+            {modal === "ai" && (
+              <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.92)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+                <div style={{ background: C.surface, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, padding: "24px 20px 32px", maxHeight: "90vh", overflowY: "auto", border: `1px solid ${C.purple}44`, borderBottom: "none" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+                    <div style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 26, letterSpacing: 3, color: C.purple }}>🤖 ANÁLISE DA SEMANA</div>
+                    <button onClick={closeModal} style={{ background: "transparent", border: "none", color: C.muted, fontSize: 22, cursor: "pointer" }}>✕</button>
+                  </div>
+                  {!aiReport && !aiLoading && !aiError && (
+                    <div style={{ textAlign: "center", padding: "20px 0 28px" }}>
+                      <div style={{ fontSize: 48, marginBottom: 12 }}>🧠</div>
+                      <div style={{ fontSize: 14, color: C.muted2, lineHeight: 1.7, marginBottom: 24 }}>A IA vai analisar seus treinos, cargas, progressão e disposição dos últimos 7 dias e te dar um relatório personalizado.</div>
+                      <button onClick={generateAIReport} style={{ width: "100%", background: C.purple, color: "#fff", border: "none", borderRadius: 13, padding: "16px", fontSize: 15, fontWeight: 800, letterSpacing: 1.5, cursor: "pointer", fontFamily: "'Barlow', sans-serif" }}>GERAR ANÁLISE</button>
+                    </div>
+                  )}
+                  {aiLoading && (
+                    <div style={{ textAlign: "center", padding: "40px 0" }}>
+                      <div style={{ fontSize: 40, marginBottom: 16 }}>⏳</div>
+                      <div style={{ color: C.purple, fontWeight: 700, letterSpacing: 1 }}>ANALISANDO SEUS DADOS...</div>
+                    </div>
+                  )}
+                  {aiError && (
+                    <div>
+                      <div style={{ background: C.redDim, border: `1px solid ${C.red}44`, borderRadius: 12, padding: "14px 16px", marginBottom: 16, fontSize: 13, color: C.red, lineHeight: 1.6 }}>{aiError}</div>
+                      <button onClick={generateAIReport} style={{ width: "100%", background: C.purple, color: "#fff", border: "none", borderRadius: 13, padding: "14px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "'Barlow', sans-serif" }}>TENTAR NOVAMENTE</button>
+                    </div>
+                  )}
+                  {aiReport && (
+                    <div>
+                      <div style={{ background: "#111", border: `1px solid ${C.purple}33`, borderRadius: 14, padding: "16px", fontSize: 14, color: C.text, lineHeight: 1.8, whiteSpace: "pre-wrap", marginBottom: 16 }}>{aiReport}</div>
+                      <button onClick={generateAIReport} style={{ width: "100%", background: "transparent", border: `1px solid ${C.purple}55`, color: C.purple, borderRadius: 13, padding: "13px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow', sans-serif", marginBottom: 10 }}>🔄 GERAR NOVA ANÁLISE</button>
+                      <button onClick={function() {
+                        if (navigator.share) {
+                          navigator.share({ title: "GYM LOG – Análise da Semana", text: aiReport });
+                        } else {
+                          navigator.clipboard.writeText(aiReport).then(function() { alert("Copiado!"); });
+                        }
+                      }} style={{ width: "100%", background: C.accentDim, border: `1px solid ${C.accent}44`, color: C.accentText, borderRadius: 13, padding: "13px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow', sans-serif" }}>📤 COMPARTILHAR / COPIAR</button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         );
       }
 
-      // ── TREINO VIEW ──
+      // ── VIEW TREINO ──
       return (
         <div>
           <style>{`@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@400;500;600;700&display=swap'); * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; } body { margin: 0; background: #0c0c0c; overflow-y: auto; } ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: #161616; } ::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; } input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; } input::placeholder { color: #3a3a3a; }`}</style>
           <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "'Barlow', sans-serif", maxWidth: 480, margin: "0 auto", position: "relative" }}>
 
             {/* HEADER */}
-            <div style={{ padding: "22px 20px 16px", background: C.surface, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, zIndex: 10 }}>
+            <div style={{ padding: "18px 20px 14px", background: C.surface, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, zIndex: 10 }}>
               <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
                 <div>
                   <div style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 40, letterSpacing: 4, color: C.accent, lineHeight: 1 }}>GYM LOG</div>
                   <div style={{ fontSize: 11, color: C.muted, letterSpacing: 2, textTransform: "uppercase", marginTop: 2 }}>Diário de Treinos</div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  {saving && <div style={{ fontSize: 11, color: C.accentText, letterSpacing: 1, fontWeight: 700, opacity: 0.8 }}>✓ SALVO</div>}
-                  <button onClick={() => setView("historico")} style={{ background: C.blueDim, border: `1px solid ${C.blue}44`, color: C.blue, borderRadius: 8, padding: "8px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow', sans-serif", letterSpacing: 1 }}>📋 HISTÓRICO</button>
+                  {saving && <div style={{ fontSize: 11, color: C.accentText, fontWeight: 700 }}>✓ SALVO</div>}
+                  <button onClick={function() { setView("historico"); }} style={{ background: C.blueDim, border: `1px solid ${C.blue}44`, color: C.blue, borderRadius: 8, padding: "8px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow', sans-serif", letterSpacing: 1 }}>📋 HISTÓRICO</button>
                 </div>
+              </div>
+
+              {/* BARRA DE DISPOSIÇÃO DO DIA */}
+              <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center" }}>
+                <button onClick={function() { setModal("energy"); }} style={{ flex: 1, background: todayEnergy ? C.accentDim : "#1a1a1a", border: `1px solid ${todayEnergy ? C.accent + "55" : C.border}`, borderRadius: 8, padding: "8px 10px", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 16 }}>{todayEnergy ? ENERGY_OPTIONS.find(function(e) { return e.value === todayEnergy; }).emoji : "😐"}</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: todayEnergy ? C.accentText : C.muted, letterSpacing: 1, textTransform: "uppercase" }}>{todayEnergy ? ENERGY_OPTIONS.find(function(e) { return e.value === todayEnergy; }).label : "Como você está?"}</span>
+                </button>
+                {todayResult && (
+                  <div style={{ background: C.blueDim, border: `1px solid ${C.blue}44`, borderRadius: 8, padding: "8px 10px", display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 16 }}>{RESULT_OPTIONS.find(function(r) { return r.value === todayResult; }).emoji}</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: C.blue, letterSpacing: 1, textTransform: "uppercase" }}>{RESULT_OPTIONS.find(function(r) { return r.value === todayResult; }).label}</span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -294,10 +569,12 @@
             <div style={{ display: "flex", background: C.surface, borderBottom: `1px solid ${C.border}`, overflowX: "auto" }}>
               {DAYS.map(function(day) {
                 const active = activeDay === day.key;
+                const isToday = day.key === todayKey;
                 const count = (workouts[day.key] || []).length;
                 return (
-                  <button key={day.key} onClick={() => setActiveDay(day.key)} style={{ flex: "0 0 auto", padding: "10px 14px 8px", border: "none", background: "transparent", color: active ? C.accent : C.muted2, fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 17, letterSpacing: 2, cursor: "pointer", borderBottom: active ? `3px solid ${C.accent}` : "3px solid transparent", transition: "all 0.15s", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                  <button key={day.key} onClick={function() { setActiveDay(day.key); }} style={{ flex: "0 0 auto", padding: "10px 14px 8px", border: "none", background: "transparent", color: active ? C.accent : C.muted2, fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 17, letterSpacing: 2, cursor: "pointer", borderBottom: active ? `3px solid ${C.accent}` : "3px solid transparent", transition: "all 0.15s", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, position: "relative" }}>
                     {day.label}
+                    {isToday && <span style={{ position: "absolute", top: 6, right: 6, width: 5, height: 5, borderRadius: "50%", background: C.accent }} />}
                     {count > 0 && <span style={{ fontSize: 9, fontFamily: "'Barlow', sans-serif", fontWeight: 700, color: active ? C.accent : C.muted }}>{count} EX</span>}
                   </button>
                 );
@@ -305,11 +582,11 @@
             </div>
 
             {/* CONTENT */}
-            <div style={{ padding: "20px 16px", paddingBottom: 160 }}>
+            <div style={{ padding: "20px 16px", paddingBottom: 170 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
                 <div>
                   <div style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 30, letterSpacing: 2, color: C.text, lineHeight: 1 }}>{currentDay.full}</div>
-                  {dayExercises.length > 0 && <div style={{ fontSize: 12, color: C.muted2, marginTop: 3 }}>{dayExercises.length} exercício{dayExercises.length !== 1 ? "s" : ""} · {totalSetsForDay(activeDay)} séries no total</div>}
+                  {dayExercises.length > 0 && <div style={{ fontSize: 12, color: C.muted2, marginTop: 3 }}>{dayExercises.length} exercício{dayExercises.length !== 1 ? "s" : ""} · {totalSetsForDay(activeDay)} séries</div>}
                 </div>
               </div>
 
@@ -322,16 +599,26 @@
               )}
 
               {dayExercises.map(function(ex, exIdx) {
+                const prog = getProgression(ex.name, ex.sets, history);
                 return (
                   <div key={ex.id} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, marginBottom: 12, overflow: "hidden" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", borderBottom: `1px solid ${C.border}`, background: C.surface2 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                         <div style={{ width: 26, height: 26, borderRadius: 6, background: C.accentDim, border: `1px solid ${C.accent}33`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bebas Neue', sans-serif", fontSize: 13, color: C.accentText, flexShrink: 0 }}>{exIdx + 1}</div>
-                        <span style={{ fontWeight: 700, fontSize: 15 }}>{ex.name}</span>
+                        <div>
+                          <div style={{ fontWeight: 700, fontSize: 15 }}>{ex.name}</div>
+                          {prog && (
+                            <div style={{ fontSize: 11, marginTop: 1 }}>
+                              {prog.type === "up" && <span style={{ color: C.accent }}>↑ +{prog.diff}kg vs último treino 🏆</span>}
+                              {prog.type === "down" && <span style={{ color: C.red }}>↓ -{prog.diff}kg vs último treino</span>}
+                              {prog.type === "equal" && <span style={{ color: C.muted2 }}>= mesmo peso do último treino</span>}
+                            </div>
+                          )}
+                        </div>
                       </div>
                       <div style={{ display: "flex", gap: 6 }}>
-                        <button onClick={() => openEdit(ex)} style={{ border: `1px solid ${C.border}`, background: "transparent", color: C.muted2, borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer", letterSpacing: 0.5 }}>EDITAR</button>
-                        <button onClick={() => setDeleteConfirm(ex.id)} style={{ border: "none", background: C.redDim, color: C.red, borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>✕</button>
+                        <button onClick={function() { openEdit(ex); }} style={{ border: `1px solid ${C.border}`, background: "transparent", color: C.muted2, borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>EDITAR</button>
+                        <button onClick={function() { setDeleteConfirm(ex.id); }} style={{ border: "none", background: C.redDim, color: C.red, borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>✕</button>
                       </div>
                     </div>
                     <div>
@@ -342,7 +629,7 @@
                         return (
                           <div key={si} style={{ display: "grid", gridTemplateColumns: "36px 1fr 1fr", padding: "10px 14px", borderBottom: si < ex.sets.length - 1 ? `1px solid ${C.border}` : "none", background: si % 2 === 0 ? "transparent" : "#1a1a1a", alignItems: "center" }}>
                             <div style={{ fontSize: 11, color: C.muted, fontFamily: "monospace" }}>S{si + 1}</div>
-                            <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{set.reps}<span style={{ fontSize: 11, color: C.muted, marginLeft: 2 }}>rep</span></div>
+                            <div style={{ fontSize: 15, fontWeight: 700 }}>{set.reps}<span style={{ fontSize: 11, color: C.muted, marginLeft: 2 }}>rep</span></div>
                             <div><span style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 22, color: C.accent, letterSpacing: 1 }}>{set.weight}</span><span style={{ fontSize: 10, color: C.muted, marginLeft: 2 }}>kg</span></div>
                           </div>
                         );
@@ -354,7 +641,7 @@
             </div>
 
             {/* BOTTOM BUTTONS */}
-            <div style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, padding: "12px 16px 20px", background: "linear-gradient(to top, #0c0c0c 70%, transparent)", pointerEvents: "none", display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, padding: "12px 16px 22px", background: "linear-gradient(to top, #0c0c0c 70%, transparent)", pointerEvents: "none", display: "flex", flexDirection: "column", gap: 10 }}>
               {dayExercises.length > 0 && (
                 <button onClick={finishWorkout} style={{ width: "100%", background: "transparent", color: C.accentText, border: `1px solid ${C.accent}55`, borderRadius: 14, padding: "13px", fontSize: 13, fontWeight: 700, letterSpacing: 1.5, cursor: "pointer", fontFamily: "'Barlow', sans-serif", pointerEvents: "all" }}>
                   ✅ FINALIZAR E SALVAR NO HISTÓRICO
@@ -367,30 +654,30 @@
 
             {/* DELETE CONFIRM */}
             {deleteConfirm && (
-              <div onClick={() => setDeleteConfirm(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+              <div onClick={function() { setDeleteConfirm(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
                 <div onClick={function(e) { e.stopPropagation(); }} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 18, padding: 24, width: "100%", maxWidth: 340, textAlign: "center" }}>
                   <div style={{ fontSize: 36, marginBottom: 12 }}>🗑️</div>
                   <div style={{ fontWeight: 700, fontSize: 17, marginBottom: 8 }}>Deletar exercício?</div>
                   <div style={{ fontSize: 13, color: C.muted2, marginBottom: 24 }}>Essa ação não pode ser desfeita.</div>
                   <div style={{ display: "flex", gap: 10 }}>
-                    <button onClick={() => setDeleteConfirm(null)} style={{ flex: 1, background: "transparent", border: `1px solid ${C.border}`, color: C.muted2, borderRadius: 10, padding: "12px", fontWeight: 600, cursor: "pointer", fontFamily: "'Barlow', sans-serif" }}>Cancelar</button>
-                    <button onClick={() => confirmDelete(deleteConfirm)} style={{ flex: 1, background: C.red, border: "none", color: "#fff", borderRadius: 10, padding: "12px", fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow', sans-serif" }}>Deletar</button>
+                    <button onClick={function() { setDeleteConfirm(null); }} style={{ flex: 1, background: "transparent", border: `1px solid ${C.border}`, color: C.muted2, borderRadius: 10, padding: "12px", fontWeight: 600, cursor: "pointer", fontFamily: "'Barlow', sans-serif" }}>Cancelar</button>
+                    <button onClick={function() { confirmDelete(deleteConfirm); }} style={{ flex: 1, background: C.red, border: "none", color: "#fff", borderRadius: 10, padding: "12px", fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow', sans-serif" }}>Deletar</button>
                   </div>
                 </div>
               </div>
             )}
 
-            {/* MODAL ADD/EDIT */}
-            {modal && (
+            {/* MODAL ADD/EDIT EXERCÍCIO */}
+            {(modal === "add" || modal === "edit") && (
               <div onClick={function(e) { if (e.target === e.currentTarget) closeModal(); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
                 <div style={{ background: C.surface, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, padding: "24px 20px 32px", maxHeight: "90vh", overflowY: "auto", border: `1px solid ${C.border}`, borderBottom: "none" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 22 }}>
                     <div style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 26, letterSpacing: 3, color: C.accent }}>{modal === "edit" ? "EDITAR EXERCÍCIO" : "NOVO EXERCÍCIO"}</div>
-                    <button onClick={closeModal} style={{ background: "transparent", border: "none", color: C.muted, fontSize: 22, cursor: "pointer", lineHeight: 1, padding: 4 }}>✕</button>
+                    <button onClick={closeModal} style={{ background: "transparent", border: "none", color: C.muted, fontSize: 22, cursor: "pointer" }}>✕</button>
                   </div>
                   <div style={{ marginBottom: 20 }}>
                     <label style={{ display: "block", fontSize: 10, fontWeight: 700, letterSpacing: 2, color: C.muted, textTransform: "uppercase", marginBottom: 7 }}>Nome do Exercício</label>
-                    <input style={{ width: "100%", background: "#111", border: `1px solid ${exerciseName.trim() ? C.accent + "55" : C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontSize: 15, outline: "none", fontFamily: "'Barlow', sans-serif" }} placeholder="Ex: Supino Reto, Rosca Direta..." value={exerciseName} onChange={function(e) { setExerciseName(e.target.value); }} />
+                    <input style={{ width: "100%", background: "#111", border: `1px solid ${exerciseName.trim() ? C.accent + "55" : C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontSize: 15, outline: "none", fontFamily: "'Barlow', sans-serif" }} placeholder="Ex: Supino Reto, Agachamento..." value={exerciseName} onChange={function(e) { setExerciseName(e.target.value); }} />
                   </div>
                   <div style={{ marginBottom: 16 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
@@ -398,10 +685,8 @@
                       <button onClick={addSet} style={{ background: C.accentDim, border: `1px solid ${C.accent}44`, color: C.accentText, borderRadius: 7, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow', sans-serif" }}>+ SÉRIE</button>
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "28px 1fr 1fr 28px", gap: 8, marginBottom: 6, paddingLeft: 4 }}>
-                      <div />
-                      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.muted, textTransform: "uppercase", textAlign: "center" }}>REPS</div>
-                      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.muted, textTransform: "uppercase", textAlign: "center" }}>CARGA (kg)</div>
-                      <div />
+                      <div /><div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.muted, textTransform: "uppercase", textAlign: "center" }}>REPS</div>
+                      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.muted, textTransform: "uppercase", textAlign: "center" }}>CARGA (kg)</div><div />
                     </div>
                     {sets.map(function(set, i) {
                       return (
@@ -420,66 +705,68 @@
               </div>
             )}
 
-            {/* FLOATING TIMER BUTTON */}
-            <button
-              onClick={function() { setTimerOpen(function(o) { return !o; }); }}
-              style={{
-                position: "fixed", bottom: 100, right: 16, zIndex: 300,
-                width: 52, height: 52, borderRadius: "50%",
-                background: timerRunning ? C.accent : C.surface2,
-                border: `2px solid ${timerRunning ? C.accent : C.border}`,
-                color: timerRunning ? "#000" : C.muted2,
-                fontSize: 22, cursor: "pointer", display: "flex",
-                alignItems: "center", justifyContent: "center",
-                boxShadow: timerRunning ? `0 0 20px ${C.accent}55` : "0 4px 16px rgba(0,0,0,0.5)",
-                transition: "all 0.2s",
-              }}
-            >⏱</button>
+            {/* MODAL DISPOSIÇÃO INICIAL */}
+            {(modal === "energy" || modal === "energy_then_result") && (
+              <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+                <div style={{ background: C.surface, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, padding: "24px 20px 32px", border: `1px solid ${C.border}`, borderBottom: "none" }}>
+                  <div style={{ textAlign: "center", marginBottom: 20 }}>
+                    <div style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 24, letterSpacing: 3, color: C.accent, marginBottom: 6 }}>COMO VOCÊ CHEGOU HOJE?</div>
+                    <div style={{ fontSize: 12, color: C.muted2 }}>Sua disposição antes de começar</div>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {ENERGY_OPTIONS.map(function(opt) {
+                      return (
+                        <button key={opt.value} onClick={function() { saveEnergy(opt.value); if (modal === "energy_then_result") setTimeout(function() { setModal("result"); }, 100); }} style={{ display: "flex", alignItems: "center", gap: 14, background: todayEnergy === opt.value ? C.accentDim : "#111", border: `1px solid ${todayEnergy === opt.value ? C.accent + "66" : C.border}`, borderRadius: 12, padding: "14px 16px", cursor: "pointer", textAlign: "left" }}>
+                          <span style={{ fontSize: 26 }}>{opt.emoji}</span>
+                          <span style={{ fontWeight: 700, fontSize: 14, color: C.text }}>{opt.label}</span>
+                          {todayEnergy === opt.value && <span style={{ marginLeft: "auto", color: C.accent, fontSize: 16 }}>✓</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button onClick={closeModal} style={{ width: "100%", background: "transparent", color: C.muted, border: `1px solid ${C.border}`, borderRadius: 13, padding: "13px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'Barlow', sans-serif", marginTop: 14 }}>Cancelar</button>
+                </div>
+              </div>
+            )}
 
-            {/* TIMER PANEL */}
+            {/* MODAL RESULTADO FINAL */}
+            {modal === "result" && (
+              <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+                <div style={{ background: C.surface, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, padding: "24px 20px 32px", border: `1px solid ${C.border}`, borderBottom: "none" }}>
+                  <div style={{ textAlign: "center", marginBottom: 20 }}>
+                    <div style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 24, letterSpacing: 3, color: C.blue, marginBottom: 6 }}>O TREINO FOI COMO VOCÊ QUERIA?</div>
+                    <div style={{ fontSize: 12, color: C.muted2 }}>Avalie sua performance de hoje</div>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {RESULT_OPTIONS.map(function(opt) {
+                      return (
+                        <button key={opt.value} onClick={function() { saveResult(opt.value); }} style={{ display: "flex", alignItems: "center", gap: 14, background: "#111", border: `1px solid ${C.border}`, borderRadius: 12, padding: "14px 16px", cursor: "pointer", textAlign: "left" }}>
+                          <span style={{ fontSize: 26 }}>{opt.emoji}</span>
+                          <span style={{ fontWeight: 700, fontSize: 14, color: C.text }}>{opt.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button onClick={closeModal} style={{ width: "100%", background: "transparent", color: C.muted, border: `1px solid ${C.border}`, borderRadius: 13, padding: "13px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'Barlow', sans-serif", marginTop: 14 }}>Pular</button>
+                </div>
+              </div>
+            )}
+
+            {/* FLOATING TIMER */}
+            <button onClick={function() { setTimerOpen(function(o) { return !o; }); }} style={{ position: "fixed", bottom: 108, right: 16, zIndex: 300, width: 52, height: 52, borderRadius: "50%", background: timerRunning ? C.accent : C.surface2, border: `2px solid ${timerRunning ? C.accent : C.border}`, color: timerRunning ? "#000" : C.muted2, fontSize: 22, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: timerRunning ? `0 0 20px ${C.accent}55` : "0 4px 16px rgba(0,0,0,0.5)", transition: "all 0.2s" }}>⏱</button>
+
             {timerOpen && (
-              <div style={{
-                position: "fixed", bottom: 162, right: 16, zIndex: 300,
-                background: C.surface, border: `1px solid ${timerRunning ? C.accent + "66" : C.border}`,
-                borderRadius: 18, padding: "18px 20px 16px",
-                boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
-                minWidth: 180, textAlign: "center",
-                transition: "border-color 0.2s",
-              }}>
+              <div style={{ position: "fixed", bottom: 170, right: 16, zIndex: 300, background: C.surface, border: `1px solid ${timerRunning ? C.accent + "66" : C.border}`, borderRadius: 18, padding: "18px 20px 16px", boxShadow: "0 8px 32px rgba(0,0,0,0.6)", minWidth: 180, textAlign: "center" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                   <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.muted, textTransform: "uppercase" }}>CRONÔMETRO</span>
-                  <button onClick={function() { setTimerOpen(false); }} style={{ background: "transparent", border: "none", color: C.muted, fontSize: 14, cursor: "pointer", lineHeight: 1, padding: 0 }}>✕</button>
+                  <button onClick={function() { setTimerOpen(false); }} style={{ background: "transparent", border: "none", color: C.muted, fontSize: 14, cursor: "pointer" }}>✕</button>
                 </div>
-                <div style={{
-                  fontFamily: "'Bebas Neue', Impact, sans-serif",
-                  fontSize: 52, letterSpacing: 4,
-                  color: timerRunning ? C.accent : C.text,
-                  lineHeight: 1, marginBottom: 14,
-                  transition: "color 0.2s",
-                }}>
+                <div style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 52, letterSpacing: 4, color: timerRunning ? C.accent : C.text, lineHeight: 1, marginBottom: 14 }}>
                   {String(Math.floor(timerSeconds / 60)).padStart(2, "0")}:{String(timerSeconds % 60).padStart(2, "0")}
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
-                  <button
-                    onClick={function() { setTimerRunning(function(r) { return !r; }); }}
-                    style={{
-                      flex: 1, background: timerRunning ? C.redDim : C.accentDim,
-                      border: `1px solid ${timerRunning ? C.red + "66" : C.accent + "66"}`,
-                      color: timerRunning ? C.red : C.accentText,
-                      borderRadius: 10, padding: "10px 0", fontSize: 11,
-                      fontWeight: 800, letterSpacing: 1, cursor: "pointer",
-                      fontFamily: "'Barlow', sans-serif",
-                    }}
-                  >{timerRunning ? "⏸ PAUSAR" : "▶ INICIAR"}</button>
-                  <button
-                    onClick={function() { setTimerSeconds(0); setTimerRunning(false); }}
-                    style={{
-                      background: "transparent", border: `1px solid ${C.border}`,
-                      color: C.muted, borderRadius: 10, padding: "10px 12px",
-                      fontSize: 11, fontWeight: 700, cursor: "pointer",
-                      fontFamily: "'Barlow', sans-serif",
-                    }}
-                  >↺</button>
+                  <button onClick={function() { setTimerRunning(function(r) { return !r; }); }} style={{ flex: 1, background: timerRunning ? C.redDim : C.accentDim, border: `1px solid ${timerRunning ? C.red + "66" : C.accent + "66"}`, color: timerRunning ? C.red : C.accentText, borderRadius: 10, padding: "10px 0", fontSize: 11, fontWeight: 800, letterSpacing: 1, cursor: "pointer", fontFamily: "'Barlow', sans-serif" }}>{timerRunning ? "⏸ PAUSAR" : "▶ INICIAR"}</button>
+                  <button onClick={function() { setTimerSeconds(0); setTimerRunning(false); }} style={{ background: "transparent", border: `1px solid ${C.border}`, color: C.muted, borderRadius: 10, padding: "10px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow', sans-serif" }}>↺</button>
                 </div>
               </div>
             )}
