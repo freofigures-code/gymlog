@@ -608,8 +608,9 @@
         const feelingsData=[];
         Object.keys(feelings).forEach(date=>{const d=new Date(date+"T00:00:00");if(d>=sevenDaysAgo){const eO=ENERGY_OPTIONS.find(e=>e.value===feelings[date].energy);const rO=RESULT_OPTIONS.find(r=>r.value===feelings[date].result);feelingsData.push({data:date,disposicao:eO?eO.emoji+" "+eO.label:"não registrado",resultado:rO?rO.emoji+" "+rO.label:"não registrado"});}});
         const hasPhotos=photos&&(photos.front||photos.side||photos.back);
+        const bodyData = profile?.weight&&profile?.height ? `\n\nDADOS CORPORAIS:\nPeso: ${profile.weight}kg | Altura: ${profile.height}cm | IMC: ${(profile.weight/Math.pow(profile.height/100,2)).toFixed(1)}` : "\n\nDADOS CORPORAIS: não informados";
         const systemPrompt="Você é um personal trainer experiente e nutricionista esportivo. O atleta é NATURAL. Analise os dados de treino"+(hasPhotos?" e as fotos enviadas":"")+". Seja direto, motivador e técnico. Use linguagem informal mas profissional.";
-        const textContent="COMPARATIVO DE EXERCÍCIOS:\n"+JSON.stringify(comparativo,null,2)+"\n\nDISPOSIÇÃO E RESULTADO:\n"+JSON.stringify(feelingsData,null,2)+(hasPhotos?"\n\nFOTOS DO FÍSICO: "+[photos.front?"FRENTE":null,photos.side?"PERFIL":null,photos.back?"COSTAS":null].filter(Boolean).join(", "):"\n\n(Sem fotos)")+"\n\nAnalise progressão, disposição, e dê 2-3 recomendações práticas. Responda em português brasileiro.";
+        const textContent="COMPARATIVO DE EXERCÍCIOS:\n"+JSON.stringify(comparativo,null,2)+"\n\nDISPOSIÇÃO E RESULTADO:\n"+JSON.stringify(feelingsData,null,2)+bodyData+(hasPhotos?"\n\nFOTOS DO FÍSICO: "+[photos.front?"FRENTE":null,photos.side?"PERFIL":null,photos.back?"COSTAS":null].filter(Boolean).join(", "):"\n\n(Sem fotos)")+"\n\nAnalise progressão, disposição"+(profile?.weight&&profile?.height?", dados corporais":"")+", e dê 2-3 recomendações práticas. Responda em português brasileiro.";
         return{systemPrompt,textContent};
       };
 
@@ -1056,6 +1057,248 @@
         );
       }
 
+      // ── PERFIL VIEW ──
+      if(bottomTab==="perfil") {
+        const [editingName,   setEditingName]   = React.useState(false);
+        const [nameInput,     setNameInput]     = React.useState(profile?.display_name||"");
+        const [weightInput,   setWeightInput]   = React.useState(profile?.weight||"");
+        const [heightInput,   setHeightInput]   = React.useState(profile?.height||"");
+        const [savingProfile, setSavingProfile] = React.useState(false);
+        const [profileMsg,    setProfileMsg]    = React.useState("");
+        const [avatarInput,   setAvatarInput]   = React.useState(profile?.avatar||"");
+        const avatarRef = React.useRef(null);
+
+        const hasBodyData = profile?.weight && profile?.height;
+
+        const saveProfile = async () => {
+          setSavingProfile(true);
+          try {
+            await sb.from("profiles").upsert({
+              id: user.id,
+              display_name: nameInput.trim()||null,
+              weight: weightInput ? Number(weightInput) : null,
+              height: heightInput ? Number(heightInput) : null,
+              avatar: avatarInput||null,
+            }, {onConflict:"id"});
+            setProfile(p=>({...p, display_name:nameInput.trim()||null, weight:weightInput?Number(weightInput):null, height:heightInput?Number(heightInput):null, avatar:avatarInput||null}));
+            setProfileMsg("✓ SALVO");
+            setEditingName(false);
+            setTimeout(()=>setProfileMsg(""), 2000);
+          } catch(e){ setProfileMsg("❌ Erro ao salvar"); }
+          setSavingProfile(false);
+        };
+
+        const handleAvatarUpload = (file) => {
+          if(!file) return;
+          compressImage(file, (base64)=>{ setAvatarInput(base64); });
+        };
+
+        const displayNameVal = nameInput || profile?.display_name || user.email?.split("@")[0] || "ATLETA";
+        const initialsVal    = displayNameVal[0].toUpperCase();
+        const totalWorkoutsAll = history.length;
+        const totalXpAll = totalWorkoutsAll * 120;
+        const levelAll   = Math.floor(totalXpAll/500)+1;
+        const xpInLvl    = totalXpAll % 500;
+        const memberSince = new Date(user.created_at).toLocaleDateString("pt-BR",{month:"long",year:"numeric"});
+
+        return (
+          <div style={{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:"'Barlow Condensed',sans-serif",maxWidth:480,margin:"0 auto",paddingBottom:100,overflowY:"auto"}}>
+            <style>{`
+              @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700;800&family=Oswald:wght@400;500;600;700&display=swap');
+              *{box-sizing:border-box;} body{margin:0;background:#080a06;}
+              @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+              .profile-input:focus{border-color:${C.accent}88!important;outline:none;}
+            `}</style>
+
+            {/* ── HERO DO ATLETA ── */}
+            <div style={{position:"relative",background:C.bgCard,borderBottom:`1px solid ${C.border}`,overflow:"hidden",paddingBottom:24}}>
+              <div style={{position:"absolute",inset:0,background:`radial-gradient(ellipse at 50% 0%, rgba(200,255,62,0.08) 0%, transparent 65%)`,pointerEvents:"none"}} />
+              <div style={{position:"absolute",inset:0,backgroundImage:"repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(200,255,62,0.012) 2px,rgba(200,255,62,0.012) 4px)",pointerEvents:"none"}} />
+              {/* corner brackets */}
+              <svg style={{position:"absolute",top:8,left:8}} width="16" height="16" viewBox="0 0 16 16"><path d="M0 8 L0 0 L8 0" fill="none" stroke={C.accent} strokeWidth="1.5" opacity="0.5"/></svg>
+              <svg style={{position:"absolute",top:8,right:8}} width="16" height="16" viewBox="0 0 16 16"><path d="M16 8 L16 0 L8 0" fill="none" stroke={C.accent} strokeWidth="1.5" opacity="0.5"/></svg>
+
+              <div style={{padding:"24px 16px 0",position:"relative",zIndex:1}}>
+                <div style={{fontSize:10,fontWeight:700,letterSpacing:4,color:C.muted2,textTransform:"uppercase",marginBottom:20}}>PERFIL DO ATLETA</div>
+
+                {/* AVATAR */}
+                <div style={{display:"flex",alignItems:"flex-end",gap:16,marginBottom:20}}>
+                  <div style={{position:"relative",flexShrink:0}}>
+                    <div onClick={()=>avatarRef.current&&avatarRef.current.click()} style={{width:80,height:80,borderRadius:4,background:avatarInput?`url(data:image/jpeg;base64,${avatarInput}) center/cover`:`linear-gradient(135deg,${C.accentDim},rgba(200,255,62,0.04))`,border:`2px solid ${C.accent}55`,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",overflow:"hidden",position:"relative"}}>
+                      {!avatarInput&&<span style={{fontFamily:"'Oswald',sans-serif",fontSize:32,fontWeight:700,color:C.accent}}>{initialsVal}</span>}
+                      <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",opacity:0,transition:"opacity 0.2s"}} className="avatar-hover">
+                        <span style={{fontSize:20}}>📷</span>
+                      </div>
+                    </div>
+                    <div style={{position:"absolute",bottom:-6,right:-6,width:22,height:22,borderRadius:2,background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}} onClick={()=>avatarRef.current&&avatarRef.current.click()}>
+                      <span style={{fontSize:11}}>✎</span>
+                    </div>
+                    <input ref={avatarRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>{if(e.target.files[0])handleAvatarUpload(e.target.files[0]);}} />
+                  </div>
+
+                  <div style={{flex:1}}>
+                    {editingName ? (
+                      <div>
+                        <input className="profile-input" value={nameInput} onChange={e=>setNameInput(e.target.value)} placeholder="Seu nome de guerra..." style={{width:"100%",background:"#0a0c08",border:`1px solid ${C.accent}55`,borderRadius:3,padding:"8px 12px",color:C.text,fontSize:18,fontFamily:"'Oswald',sans-serif",letterSpacing:1,fontWeight:600,marginBottom:6}} autoFocus onKeyDown={e=>{if(e.key==="Enter")saveProfile();}} />
+                        <div style={{display:"flex",gap:6}}>
+                          <button onClick={saveProfile} style={{flex:1,background:C.accent,border:"none",borderRadius:2,padding:"6px",fontSize:11,fontWeight:800,color:"#000",cursor:"pointer",fontFamily:"'Oswald',sans-serif",letterSpacing:1}}>SALVAR</button>
+                          <button onClick={()=>setEditingName(false)} style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:2,padding:"6px 10px",fontSize:11,color:C.muted,cursor:"pointer"}}>✕</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div>
+                        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                          <div style={{fontFamily:"'Oswald',Impact,sans-serif",fontSize:26,fontWeight:700,color:C.text,letterSpacing:1,lineHeight:1}}>{displayNameVal.toUpperCase()}</div>
+                          <button onClick={()=>setEditingName(true)} style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:2,padding:"3px 8px",fontSize:10,color:C.muted2,cursor:"pointer",fontWeight:700,fontFamily:"'Barlow Condensed',sans-serif"}}>✎ EDITAR</button>
+                        </div>
+                        <div style={{fontSize:10,color:C.muted2,letterSpacing:1}}>Membro desde {memberSince}</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* XP BAR */}
+                <div style={{background:"#0a0c08",border:`1px solid ${C.border}`,borderRadius:4,padding:"12px 14px"}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <span style={{fontSize:16}}>🛡️</span>
+                      <span style={{fontFamily:"'Oswald',Impact,sans-serif",fontSize:18,color:C.accent,fontWeight:700,letterSpacing:2}}>LVL {levelAll}</span>
+                      <span style={{fontSize:10,color:C.muted2,fontWeight:700,letterSpacing:1}}>DISCIPLINA</span>
+                    </div>
+                    <span style={{fontSize:10,color:C.muted2}}>{xpInLvl} / 500 XP</span>
+                  </div>
+                  <div style={{height:6,background:C.border,borderRadius:3,overflow:"hidden"}}>
+                    <div style={{height:"100%",width:`${(xpInLvl/500)*100}%`,background:`linear-gradient(90deg,${C.accent},#9dcc00)`,borderRadius:3,transition:"width 0.8s ease"}} />
+                  </div>
+                  <div style={{fontSize:9,color:C.muted,marginTop:6,letterSpacing:1}}>{totalWorkoutsAll} TREINOS FINALIZADOS · {totalXpAll} XP TOTAL</div>
+                </div>
+              </div>
+            </div>
+
+            <div style={{padding:"16px",animation:"fadeUp 0.4s ease"}}>
+
+              {/* ── AVISO CORPO ── */}
+              {!hasBodyData && (
+                <div style={{marginBottom:16,background:`linear-gradient(135deg,rgba(200,255,62,0.06),rgba(200,255,62,0.02))`,border:`1px solid ${C.accent}44`,borderRadius:4,padding:"14px 16px",position:"relative",overflow:"hidden"}}>
+                  <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:`linear-gradient(90deg,transparent,${C.accent},transparent)`}} />
+                  <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+                    <span style={{fontSize:24,flexShrink:0}}>🤖</span>
+                    <div>
+                      <div style={{fontSize:11,fontWeight:700,letterSpacing:2,color:C.accent,textTransform:"uppercase",marginBottom:4}}>FORGE AI PRECISA DE VOCÊ</div>
+                      <div style={{fontSize:13,color:C.muted2,lineHeight:1.6}}>Adicione seu <span style={{color:C.text,fontWeight:700}}>peso</span> e <span style={{color:C.text,fontWeight:700}}>altura</span> abaixo para que a IA consiga analisar seu IMC, composição corporal estimada e personalizar ainda mais as recomendações de treino.</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ── DADOS CORPORAIS ── */}
+              <div style={{marginBottom:14}}>
+                <div style={{fontSize:10,fontWeight:700,letterSpacing:3,color:C.accentText,textTransform:"uppercase",marginBottom:12,display:"flex",alignItems:"center",gap:8}}>
+                  <span>DADOS CORPORAIS</span>
+                  {hasBodyData&&<span style={{fontSize:9,background:C.accentDim,border:`1px solid ${C.accent}44`,color:C.accentText,padding:"2px 8px",borderRadius:2}}>IA ATIVA ✓</span>}
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+                  {/* Peso */}
+                  <div style={{background:C.bgCard,border:`1px solid ${profile?.weight?C.accent+"44":C.border}`,borderRadius:4,padding:"12px 14px",position:"relative"}}>
+                    {profile?.weight&&<div style={{position:"absolute",top:0,left:0,right:0,height:1,background:`linear-gradient(90deg,${C.accent},transparent)`}} />}
+                    <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.muted2,textTransform:"uppercase",marginBottom:6}}>PESO</div>
+                    <div style={{display:"flex",alignItems:"flex-end",gap:4,marginBottom:8}}>
+                      <input className="profile-input" type="number" min="30" max="300" value={weightInput} onChange={e=>setWeightInput(e.target.value)} placeholder="—" style={{width:"100%",background:"transparent",border:"none",borderBottom:`1px solid ${C.border}`,color:weightInput?C.accent:C.muted,fontFamily:"'Oswald',Impact,sans-serif",fontSize:28,fontWeight:700,letterSpacing:1,padding:"0 0 4px",textAlign:"left",outline:"none"}} />
+                      <span style={{fontSize:11,color:C.muted2,marginBottom:6,flexShrink:0}}>kg</span>
+                    </div>
+                    {profile?.weight&&<div style={{fontSize:9,color:C.muted2}}>Atual: {profile.weight}kg</div>}
+                  </div>
+                  {/* Altura */}
+                  <div style={{background:C.bgCard,border:`1px solid ${profile?.height?C.accent+"44":C.border}`,borderRadius:4,padding:"12px 14px",position:"relative"}}>
+                    {profile?.height&&<div style={{position:"absolute",top:0,left:0,right:0,height:1,background:`linear-gradient(90deg,${C.accent},transparent)`}} />}
+                    <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.muted2,textTransform:"uppercase",marginBottom:6}}>ALTURA</div>
+                    <div style={{display:"flex",alignItems:"flex-end",gap:4,marginBottom:8}}>
+                      <input className="profile-input" type="number" min="100" max="250" value={heightInput} onChange={e=>setHeightInput(e.target.value)} placeholder="—" style={{width:"100%",background:"transparent",border:"none",borderBottom:`1px solid ${C.border}`,color:heightInput?C.accent:C.muted,fontFamily:"'Oswald',Impact,sans-serif",fontSize:28,fontWeight:700,letterSpacing:1,padding:"0 0 4px",textAlign:"left",outline:"none"}} />
+                      <span style={{fontSize:11,color:C.muted2,marginBottom:6,flexShrink:0}}>cm</span>
+                    </div>
+                    {profile?.height&&<div style={{fontSize:9,color:C.muted2}}>Atual: {profile.height}cm</div>}
+                  </div>
+                </div>
+
+                {/* IMC se tiver os dois */}
+                {weightInput && heightInput && Number(weightInput)>0 && Number(heightInput)>0 && (
+                  <div style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:4,padding:"12px 14px",display:"flex",alignItems:"center",gap:14}}>
+                    {(()=>{
+                      const imc = Number(weightInput) / Math.pow(Number(heightInput)/100, 2);
+                      const cat = imc<18.5?"ABAIXO DO PESO":imc<25?"PESO IDEAL":imc<30?"SOBREPESO":"OBESIDADE";
+                      const col = imc<18.5?C.blue:imc<25?C.accent:imc<30?C.yellow:C.red;
+                      return (
+                        <>
+                          <div>
+                            <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.muted2,textTransform:"uppercase",marginBottom:2}}>IMC ESTIMADO</div>
+                            <div style={{fontFamily:"'Oswald',Impact,sans-serif",fontSize:28,color:col,fontWeight:700,letterSpacing:1,lineHeight:1}}>{imc.toFixed(1)}</div>
+                          </div>
+                          <div style={{flex:1}}>
+                            <div style={{fontSize:11,fontWeight:700,color:col,letterSpacing:1,marginBottom:4}}>{cat}</div>
+                            <div style={{height:4,background:C.border,borderRadius:2,overflow:"hidden"}}>
+                              <div style={{height:"100%",width:`${Math.min(((imc-10)/35)*100,100)}%`,background:col,borderRadius:2,transition:"width 0.5s"}} />
+                            </div>
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
+
+                <button onClick={saveProfile} disabled={savingProfile} style={{width:"100%",marginTop:10,background:C.accent,color:"#000",border:"none",borderRadius:3,padding:"14px",fontSize:14,fontWeight:800,letterSpacing:2,cursor:savingProfile?"default":"pointer",fontFamily:"'Oswald',sans-serif",opacity:savingProfile?0.6:1,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                  {savingProfile?"SALVANDO...":profileMsg||"SALVAR DADOS"}
+                </button>
+              </div>
+
+              {/* ── ESTATÍSTICAS ── */}
+              <div style={{marginBottom:14}}>
+                <div style={{fontSize:10,fontWeight:700,letterSpacing:3,color:C.accentText,textTransform:"uppercase",marginBottom:12}}>ESTATÍSTICAS</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+                  {[
+                    {label:"TREINOS",value:totalWorkoutsAll,icon:"🏋️"},
+                    {label:"SEMANAS",value:streakWeeks,icon:"🔥",suffix:" streak"},
+                    {label:"CONSISTÊNCIA",value:consistencyPct+"%",icon:"📊"},
+                  ].map((s,i)=>(
+                    <div key={i} style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:4,padding:"10px 10px 12px",textAlign:"center"}}>
+                      <div style={{fontSize:18,marginBottom:4}}>{s.icon}</div>
+                      <div style={{fontFamily:"'Oswald',Impact,sans-serif",fontSize:20,color:C.accent,fontWeight:700,letterSpacing:1,lineHeight:1}}>{s.value}</div>
+                      <div style={{fontSize:8,fontWeight:700,letterSpacing:1,color:C.muted2,textTransform:"uppercase",marginTop:4}}>{s.label}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* ── CONTA ── */}
+              <div style={{marginBottom:14}}>
+                <div style={{fontSize:10,fontWeight:700,letterSpacing:3,color:C.accentText,textTransform:"uppercase",marginBottom:12}}>CONTA</div>
+                <div style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:4,overflow:"hidden"}}>
+                  <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                    <div>
+                      <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.muted2,textTransform:"uppercase",marginBottom:2}}>EMAIL</div>
+                      <div style={{fontSize:13,color:C.text}}>{user.email}</div>
+                    </div>
+                    <span style={{fontSize:16}}>📧</span>
+                  </div>
+                  <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                    <div>
+                      <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.muted2,textTransform:"uppercase",marginBottom:2}}>MEMBRO DESDE</div>
+                      <div style={{fontSize:13,color:C.text,textTransform:"capitalize"}}>{memberSince}</div>
+                    </div>
+                    <span style={{fontSize:16}}>📅</span>
+                  </div>
+                  <button onClick={async()=>{ await sb.auth.signOut(); }} style={{width:"100%",background:"transparent",border:"none",color:C.red,fontSize:13,fontWeight:700,padding:"14px 16px",cursor:"pointer",textAlign:"left",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,display:"flex",alignItems:"center",gap:10}}>
+                    <span style={{fontSize:16}}>🚪</span> SAIR DA CONTA
+                  </button>
+                </div>
+              </div>
+
+            </div>
+
+            <BottomNav active={bottomTab} onChange={setBottomTab} />
+          </div>
+        );
+      }
+
       // ── INICIO VIEW ──
       // Reorder days starting from today
       const todayIdx = DAYS.findIndex(d=>d.key===todayKey);
@@ -1162,6 +1405,8 @@
       // ══════════════════════════════════════
       //  INÍCIO MAIN VIEW
       // ══════════════════════════════════════
+      const todayDay       = ALL_DAYS.find(d=>d.key===todayKey) || DAYS[0];
+      const todayExercises = workouts[todayKey] || [];
       const displayName = profile?.display_name || user.email?.split("@")[0] || "K";
       const initials = displayName[0].toUpperCase();
 
@@ -1217,7 +1462,7 @@
                     {menuOpen&&(
                       <div style={{position:"absolute",top:42,right:0,background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:4,padding:"6px 0",minWidth:180,zIndex:200,boxShadow:"0 8px 32px rgba(0,0,0,0.8)"}}>
                         <div style={{padding:"8px 16px 6px",fontSize:11,color:C.muted,letterSpacing:1,borderBottom:`1px solid ${C.border}`,marginBottom:4}}>{user.email}</div>
-                        <button onClick={async()=>{setMenuOpen(false);await sb.auth.signOut();onSignOut();}} style={{width:"100%",background:"transparent",border:"none",color:C.red,fontSize:13,fontWeight:700,padding:"10px 16px",cursor:"pointer",textAlign:"left",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>SAIR</button>
+                       <button onClick={async()=>{setMenuOpen(false);await sb.auth.signOut();}} style={{width:"100%",background:"transparent",border:"none",color:C.red,fontSize:13,fontWeight:700,padding:"10px 16px",cursor:"pointer",textAlign:"left",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>SAIR</button>
                       </div>
                     )}
                   </div>
@@ -1330,8 +1575,8 @@
               <div style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:4,padding:"14px 12px",position:"relative",overflow:"hidden",gridColumn:"1",cursor:"pointer"}} onClick={()=>setBottomTab("exercicios")}>
                 <div style={{position:"absolute",top:0,left:0,right:0,height:1,background:`linear-gradient(90deg,${C.accent},transparent)`}} />
                 <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.accentText,textTransform:"uppercase",marginBottom:8}}>TREINO DO DIA</div>
-                <div style={{fontFamily:"'Oswald',Impact,sans-serif",fontSize:28,fontWeight:700,color:C.text,lineHeight:1,marginBottom:6,letterSpacing:1}}>{currentDay.full.toUpperCase()}</div>
-                {dayExercises.length===0?(
+                <div style={{fontFamily:"'Oswald',Impact,sans-serif",fontSize:28,fontWeight:700,color:C.text,lineHeight:1,marginBottom:6,letterSpacing:1}}>{todayDay.full.toUpperCase()}</div>
+                {todayExercises.length===0?(
                   <>
                     <div style={{fontSize:9,color:C.muted2,letterSpacing:1,textTransform:"uppercase",marginBottom:12}}>AINDA NÃO HÁ EXERCÍCIOS</div>
                     <div style={{background:"#0a0c08",border:`1px solid ${C.border}`,borderRadius:3,padding:"10px",marginBottom:12}}>
@@ -1342,21 +1587,21 @@
                   </>
                 ):(
                   <div style={{marginBottom:12}}>
-                    <div style={{fontSize:11,color:C.muted2,marginBottom:8}}>{dayExercises.length} exercício{dayExercises.length!==1?"s":""}</div>
-                    {dayExercises.slice(0,3).map((ex,i)=>(
+                    <div style={{fontSize:11,color:C.muted2,marginBottom:8}}>{todayExercises.length} exercício{todayExercises.length!==1?"s":""}</div>
+                    {todayExercises.slice(0,3).map((ex,i)=>(
                       <div key={i} style={{fontSize:11,color:C.text,marginBottom:3,display:"flex",alignItems:"center",gap:6}}>
                         <span style={{color:C.accent}}>▸</span>
                         <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ex.name}</span>
                       </div>
                     ))}
-                    {dayExercises.length>3&&<div style={{fontSize:10,color:C.muted,marginTop:4}}>+{dayExercises.length-3} mais...</div>}
+                    {todayExercises.length>3&&<div style={{fontSize:10,color:C.muted,marginTop:4}}>+{todayExercises.length-3} mais...</div>}
                   </div>
                 )}
                 <div style={{background:C.accent,color:"#000",borderRadius:3,padding:"10px",fontSize:13,fontWeight:800,letterSpacing:2,textAlign:"center",fontFamily:"'Oswald',sans-serif"}}>
                   + NOVO EXERCÍCIO
                   <div style={{fontSize:9,fontWeight:600,letterSpacing:1,opacity:0.7,marginTop:1}}>REGISTRAR TREINO</div>
                 </div>
-                {dayExercises.length>0&&(
+                {todayExercises.length>0&&(
                   <button onClick={(e)=>{e.stopPropagation();finishWorkout();}} style={{width:"100%",background:"transparent",color:C.accentText,border:`1px solid ${C.accent}44`,borderRadius:3,padding:"8px",fontSize:11,fontWeight:700,letterSpacing:1,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",marginTop:8}}>
                     ✅ FINALIZAR
                   </button>
@@ -1390,31 +1635,7 @@
                     </div>
                   </div>
                 </div>
-                {/* Carga Total */}
-                <div style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:4,padding:"10px 12px"}}>
-                  <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.muted2,textTransform:"uppercase",marginBottom:4}}>CARGA TOTAL</div>
-                  <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between"}}>
-                    <div>
-                      <div style={{fontFamily:"'Oswald',Impact,sans-serif",fontSize:24,color:C.text,fontWeight:700,letterSpacing:1,lineHeight:1}}>
-                        {(totalVolume/1000).toFixed(1).replace(".",",")}
-                      </div>
-                      <div style={{fontSize:9,color:C.muted2,marginTop:2}}>KG LEVANTADOS</div>
-                    </div>
-                    {/* mini sparkline */}
-                    <svg width="52" height="28" viewBox="0 0 52 28">
-                      {history.slice(0,8).reverse().map((entry,i,arr)=>{
-                        const vol=entry.exercises.reduce((a,ex)=>a+ex.sets.reduce((b,s)=>b+(s.reps*s.weight),0),0);
-                        const maxV=Math.max(...arr.map(e=>e.exercises.reduce((a,ex)=>a+ex.sets.reduce((b,s)=>b+(s.reps*s.weight),0),0)),1);
-                        const x=i*(52/(arr.length-1||1));
-                        const y=28-(vol/maxV)*24;
-                        if(i===0)return null;
-                        const prevVol=arr[i-1].exercises.reduce((a,ex)=>a+ex.sets.reduce((b,s)=>b+(s.reps*s.weight),0),0);
-                        const px=(i-1)*(52/(arr.length-1||1));const py=28-(prevVol/maxV)*24;
-                        return <line key={i} x1={px} y1={py} x2={x} y2={y} stroke={C.accent} strokeWidth="1.5" opacity="0.8"/>;
-                      })}
-                    </svg>
-                  </div>
-                </div>
+                
                 {/* Nível */}
                 <div style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:4,padding:"10px 12px"}}>
                   <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.muted2,textTransform:"uppercase",marginBottom:4}}>NÍVEL DE DISCIPLINA</div>
