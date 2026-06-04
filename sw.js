@@ -1,89 +1,90 @@
-const http = require("http");
-const https = require("https");
-const PORT = process.env.PORT || 3000;
-const API_KEY = process.env.CLAUDE_API_KEY || "";
+// ─── MUDE ESTE NÚMERO A CADA ATUALIZAÇÃO DO APP ───────────────────────────
+const VERSION = '2';
+// ───────────────────────────────────────────────────────────────────────────
 
-const server = http.createServer(function(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  res.setHeader("Access-Control-Max-Age", "86400");
+const VERSION = '3';
+const CACHE = 'gymlog-v' + VERSION;
+const ASSETS = ['./index.html', './manifest.json', './icon.svg', './sw.js'];
+const ASSETS = ['./index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
-  if (req.method === "OPTIONS") {
-    res.writeHead(204);
-    res.end();
+// INSTALL: abre o novo cache e já assume o controle sem esperar
+self.addEventListener('install', function(e) {
+  e.waitUntil(
+    caches.open(CACHE).then(function(c) {
+      return c.addAll(ASSETS);
+    })
+    caches.open(CACHE).then(function(c) { return c.addAll(ASSETS); })
+  );
+  // Não espera o app fechar — ativa imediatamente
+  self.skipWaiting();
+});
+
+// ACTIVATE: apaga TODOS os caches antigos e assume controle das abas abertas
+self.addEventListener('activate', function(e) {
+  e.waitUntil(
+    caches.keys().then(function(keys) {
+      return Promise.all(
+        keys
+          .filter(function(k) { return k !== CACHE; })
+          .map(function(k) {
+            console.log('[SW] Deletando cache antigo:', k);
+            return caches.delete(k);
+          })
+        keys.filter(function(k) { return k !== CACHE; }).map(function(k) { return caches.delete(k); })
+      );
+    }).then(function() {
+      // Assume controle de todas as abas abertas imediatamente
+      return self.clients.claim();
+    })
+    }).then(function() { return self.clients.claim(); })
+  );
+});
+
+// FETCH: index.html sempre vem da rede (garante atualização)
+// Demais assets: cache primeiro, fallback para rede
+self.addEventListener('fetch', function(e) {
+  // NUNCA cacheia POST ou requisições para a API
+  if (e.request.method !== 'GET') return;
+  if (e.request.url.indexOf('easypanel.host') !== -1) return;
+  if (e.request.url.indexOf('api.anthropic.com') !== -1) return;
+
+  var url = new URL(e.request.url);
+
+  // Sempre busca o HTML na rede para pegar versão mais recente
+  // HTML sempre da rede primeiro
+  if (url.pathname.endsWith('.html') || url.pathname === '/' || url.pathname.endsWith('/')) {
+    e.respondWith(
+      fetch(e.request)
+        .then(function(networkResponse) {
+          // Atualiza o cache com a versão mais recente
+          var clone = networkResponse.clone();
+          caches.open(CACHE).then(function(c) { c.put(e.request, clone); });
+          return networkResponse;
+        })
+        .catch(function() {
+          // Sem internet: serve do cache
+          return caches.match(e.request);
+        })
+      fetch(e.request).then(function(r) {
+        var clone = r.clone();
+        caches.open(CACHE).then(function(c) { c.put(e.request, clone); });
+        return r;
+      }).catch(function() { return caches.match(e.request); })
+    );
     return;
   }
 
-  if (req.url === "/health") {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok" }));
-    return;
-  }
-
-  if (req.method !== "POST" || req.url !== "/analyze") {
-    res.writeHead(404, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Not found" }));
-    return;
-  }
-
-  let body = "";
-  req.on("data", function(chunk) { body += chunk.toString(); });
-  req.on("end", function() {
-    let parsed;
-    try { parsed = JSON.parse(body); } catch(e) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Invalid JSON" }));
-      return;
-    }
-
-    const prompt = parsed.prompt;
-    if (!prompt) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Missing prompt" }));
-      return;
-    }
-
-    const payload = JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 1024,
-      messages: [{ role: "user", content: prompt }]
-    });
-
-    const options = {
-      hostname: "api.anthropic.com",
-      path: "/v1/messages",
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": API_KEY,
-        "anthropic-version": "2023-06-01",
-        "Content-Length": Buffer.byteLength(payload)
-      }
-    };
-
-    const apiReq = https.request(options, function(apiRes) {
-      let data = "";
-      apiRes.on("data", function(chunk) { data += chunk; });
-      apiRes.on("end", function() {
-        res.writeHead(apiRes.statusCode, { "Content-Type": "application/json" });
-        res.end(data);
+  // Outros assets: cache primeiro
+  // Demais assets: cache primeiro
+  e.respondWith(
+    caches.match(e.request).then(function(cached) {
+      return cached || fetch(e.request).then(function(networkResponse) {
+        var clone = networkResponse.clone();
+      return cached || fetch(e.request).then(function(r) {
+        var clone = r.clone();
+        caches.open(CACHE).then(function(c) { c.put(e.request, clone); });
+        return networkResponse;
+        return r;
       });
-    });
-
-    apiReq.on("error", function(e) {
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: e.message }));
-    });
-
-    apiReq.write(payload);
-    apiReq.end();
-  });
-});
-
-server.keepAliveTimeout = 185 * 1000;
-server.headersTimeout = 190 * 1000;
-
-server.listen(PORT, function() {
-  console.log("GymLog API rodando na porta " + PORT);
-});
+    })
+  );
