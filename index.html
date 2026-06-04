@@ -400,6 +400,14 @@
       const [motiveVisible,    setMotiveVisible]    = useState(false);
       const [showMigrate,  setShowMigrate]  = useState(false);
       const [migrating,    setMigrating]    = useState(false);
+      const [editingName,   setEditingName]   = useState(false);
+      const [nameInput,     setNameInput]     = useState("");
+      const [weightInput,   setWeightInput]   = useState("");
+      const [heightInput,   setHeightInput]   = useState("");
+      const [savingProfile, setSavingProfile] = useState(false);
+      const [profileMsg,    setProfileMsg]    = useState("");
+      const [avatarInput,   setAvatarInput]   = useState("");
+      const avatarRef = useRef(null);
       const chatEndRef = useRef(null);
 
       const currentWeekKey = getWeekKey(todayISO());
@@ -429,6 +437,14 @@
       };
 
       useEffect(()=>{ loadAll(); },[]);
+      useEffect(()=>{
+        if(profile){
+          setNameInput(profile.display_name||"");
+          setWeightInput(profile.weight||"");
+          setHeightInput(profile.height||"");
+          setAvatarInput(profile.avatar||"");
+        }
+      },[profile]);
       useEffect(()=>{ if(!timerRunning)return; const t=setInterval(()=>setTimerSeconds(s=>s+1),1000); return()=>clearInterval(t); },[timerRunning]);
       // Cronômetro geral do treino
       useEffect(()=>{
@@ -572,6 +588,29 @@
         const sec = s%60;
         if(h>0) return `${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;
         return `${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;
+      };
+
+      const saveProfile = async () => {
+        setSavingProfile(true);
+        try {
+          await sb.from("profiles").upsert({
+            id: user.id,
+            display_name: nameInput.trim()||null,
+            weight: weightInput ? Number(weightInput) : null,
+            height: heightInput ? Number(heightInput) : null,
+            avatar: avatarInput||null,
+          }, {onConflict:"id"});
+          setProfile(p=>({...p, display_name:nameInput.trim()||null, weight:weightInput?Number(weightInput):null, height:heightInput?Number(heightInput):null, avatar:avatarInput||null}));
+          setProfileMsg("✓ SALVO");
+          setEditingName(false);
+          setTimeout(()=>setProfileMsg(""), 2000);
+        } catch(e){ setProfileMsg("❌ Erro ao salvar"); }
+        setSavingProfile(false);
+      };
+
+      const handleAvatarUpload = (file) => {
+        if(!file) return;
+        compressImage(file, (base64)=>{ setAvatarInput(base64); });
       };
 
       const handlePhotoUpload = (slot, file) => {
@@ -1059,39 +1098,7 @@
 
       // ── PERFIL VIEW ──
       if(bottomTab==="perfil") {
-        const [editingName,   setEditingName]   = React.useState(false);
-        const [nameInput,     setNameInput]     = React.useState(profile?.display_name||"");
-        const [weightInput,   setWeightInput]   = React.useState(profile?.weight||"");
-        const [heightInput,   setHeightInput]   = React.useState(profile?.height||"");
-        const [savingProfile, setSavingProfile] = React.useState(false);
-        const [profileMsg,    setProfileMsg]    = React.useState("");
-        const [avatarInput,   setAvatarInput]   = React.useState(profile?.avatar||"");
-        const avatarRef = React.useRef(null);
-
         const hasBodyData = profile?.weight && profile?.height;
-
-        const saveProfile = async () => {
-          setSavingProfile(true);
-          try {
-            await sb.from("profiles").upsert({
-              id: user.id,
-              display_name: nameInput.trim()||null,
-              weight: weightInput ? Number(weightInput) : null,
-              height: heightInput ? Number(heightInput) : null,
-              avatar: avatarInput||null,
-            }, {onConflict:"id"});
-            setProfile(p=>({...p, display_name:nameInput.trim()||null, weight:weightInput?Number(weightInput):null, height:heightInput?Number(heightInput):null, avatar:avatarInput||null}));
-            setProfileMsg("✓ SALVO");
-            setEditingName(false);
-            setTimeout(()=>setProfileMsg(""), 2000);
-          } catch(e){ setProfileMsg("❌ Erro ao salvar"); }
-          setSavingProfile(false);
-        };
-
-        const handleAvatarUpload = (file) => {
-          if(!file) return;
-          compressImage(file, (base64)=>{ setAvatarInput(base64); });
-        };
 
         const displayNameVal = nameInput || profile?.display_name || user.email?.split("@")[0] || "ATLETA";
         const initialsVal    = displayNameVal[0].toUpperCase();
