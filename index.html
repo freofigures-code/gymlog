@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#C8FF3E" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="GYM LOG" />
-  <title>GYM LOG</title>
+  <meta name="apple-mobile-web-app-title" content="IRON LOG" />
+  <title>IRON LOG</title>
   <link rel="manifest" href="./manifest.json" />
   <link rel="apple-touch-icon" href="./icon-192.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png" />
@@ -20,510 +20,752 @@
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 </head>
 <body>
   <div id="root"></div>
-
   <script>
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
-        .then(function(reg) {
-          reg.update();
-          reg.addEventListener('updatefound', function() {
-            var newSW = reg.installing;
-            newSW.addEventListener('statechange', function() {
-              if (newSW.state === 'activated') { window.location.reload(); }
-            });
-          });
-        }).catch(console.error);
-    }
-
-    window.CLAUDE_API_KEY = "https://chatwoot-app-academia-api-claude.7t6kue.easypanel.host/";
-
-    window.storage = {
-      get: async function(key) {
-        try { var v = localStorage.getItem(key); return v !== null ? { key: key, value: v } : null; } catch(e) { return null; }
-      },
-      set: async function(key, value) {
-        try { localStorage.setItem(key, value); return { key: key, value: value }; } catch(e) { return null; }
-      },
-    };
+    // ── CONFIG ──
+    window.SUPABASE_URL  = "https://tkarbvqqepolhizcfxbx.supabase.co";
+    window.SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRrYXJidnFxZXBvbGhpemNmeGJ4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1MzY1MDYsImV4cCI6MjA5NjExMjUwNn0.d90JLpf1M1EE0vFKsAdTQGZUTrnJKRm49zq_EFbeOwc";
+    window.AI_API_URL    = "https://chatwoot-app-academia-api-claude.7t6kue.easypanel.host/";
+    window._sb = supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON);
   </script>
 
   <script type="text/babel">
-    const { useState, useEffect, useRef } = React;
+    const { useState, useEffect, useRef, useCallback } = React;
+    const sb = window._sb;
 
-    const WEEKDAY_MAP = { 0: "dom", 1: "seg", 2: "ter", 3: "qua", 4: "qui", 5: "sex", 6: "sab" };
-    function getTodayKey() { return WEEKDAY_MAP[new Date().getDay()] || "seg"; }
+    // ── CONSTANTS ──
+    const WEEKDAY_MAP = { 0:"dom",1:"seg",2:"ter",3:"qua",4:"qui",5:"sex",6:"sab" };
+    const getTodayKey = () => WEEKDAY_MAP[new Date().getDay()] || "seg";
+    const todayISO    = () => new Date().toISOString().slice(0,10);
 
     const DAYS = [
-      { key: "seg", label: "SEG", full: "Segunda-feira" },
-      { key: "ter", label: "TER", full: "Terça-feira" },
-      { key: "qua", label: "QUA", full: "Quarta-feira" },
-      { key: "qui", label: "QUI", full: "Quinta-feira" },
-      { key: "sex", label: "SEX", full: "Sexta-feira" },
-      { key: "sab", label: "SAB", full: "Sábado" },
+      {key:"seg",label:"SEG",full:"Segunda-feira"},
+      {key:"ter",label:"TER",full:"Terça-feira"},
+      {key:"qua",label:"QUA",full:"Quarta-feira"},
+      {key:"qui",label:"QUI",full:"Quinta-feira"},
+      {key:"sex",label:"SEX",full:"Sexta-feira"},
+      {key:"sab",label:"SAB",full:"Sábado"},
     ];
 
     const C = {
-      bg: "#0c0c0c", surface: "#161616", surface2: "#1e1e1e", border: "#272727",
-      accent: "#C8FF3E", accentDim: "#C8FF3E18", accentText: "#9dcc00",
-      text: "#f2f2f2", muted: "#555", muted2: "#888", red: "#ff4b4b", redDim: "#ff4b4b18",
-      blue: "#3E9CFF", blueDim: "#3E9CFF18", purple: "#a78bfa", purpleDim: "#a78bfa18",
-      orange: "#fb923c", orangeDim: "#fb923c18",
+      bg:"#0c0c0c", surface:"#161616", surface2:"#1e1e1e", border:"#272727",
+      accent:"#C8FF3E", accentDim:"#C8FF3E18", accentText:"#9dcc00",
+      text:"#f2f2f2", muted:"#555", muted2:"#888",
+      red:"#ff4b4b", redDim:"#ff4b4b18",
+      blue:"#3E9CFF", blueDim:"#3E9CFF18",
+      purple:"#a78bfa", purpleDim:"#a78bfa18",
+      orange:"#fb923c",
     };
 
-    const STORAGE_KEY  = "gymlog-workouts-v1";
-    const HISTORY_KEY  = "gymlog-history-v1";
-    const FEELINGS_KEY = "gymlog-feelings-v1";
-    const PHOTOS_KEY   = "gymlog-photos-v1"; // { "2025-W23": { front: "base64...", side: "base64...", back: "base64..." } }
-
     const ENERGY_OPTIONS = [
-      { value: 1, emoji: "😴", label: "Mal dormido" },
-      { value: 2, emoji: "😐", label: "Normal" },
-      { value: 3, emoji: "💪", label: "Bem" },
-      { value: 4, emoji: "🔥", label: "Com vontade" },
-      { value: 5, emoji: "⚡", label: "Pra destruir" },
+      {value:1,emoji:"😴",label:"Mal dormido"},
+      {value:2,emoji:"😐",label:"Normal"},
+      {value:3,emoji:"💪",label:"Bem"},
+      {value:4,emoji:"🔥",label:"Com vontade"},
+      {value:5,emoji:"⚡",label:"Pra destruir"},
+    ];
+    const RESULT_OPTIONS = [
+      {value:1,emoji:"👎",label:"Abaixo do esperado"},
+      {value:2,emoji:"😐",label:"Mediano"},
+      {value:3,emoji:"👍",label:"Como planejado"},
+      {value:4,emoji:"💥",label:"Acima do esperado"},
+      {value:5,emoji:"🚀",label:"Superei demais"},
     ];
 
-    const RESULT_OPTIONS = [
-      { value: 1, emoji: "👎", label: "Abaixo do esperado" },
-      { value: 2, emoji: "😐", label: "Mediano" },
-      { value: 3, emoji: "👍", label: "Como planejado" },
-      { value: 4, emoji: "💥", label: "Acima do esperado" },
-      { value: 5, emoji: "🚀", label: "Superei demais" },
+    const ONBOARDING_STEPS = [
+      {
+        icon:"🏋️",
+        title:"Bem-vindo ao IRON LOG",
+        subtitle:"Seu diário de treinos com IA",
+        desc:"Registre cada treino, acompanhe sua evolução de cargas e receba análises personalizadas do seu personal trainer com IA.",
+        cta:"Próximo",
+      },
+      {
+        icon:"📋",
+        title:"Adicione seus exercícios",
+        subtitle:"Por dia da semana",
+        desc:"Selecione o dia, toque em NOVO EXERCÍCIO e registre nome, séries, repetições e carga. O app salva tudo automaticamente na nuvem.",
+        cta:"Próximo",
+      },
+      {
+        icon:"📈",
+        title:"Acompanhe a progressão",
+        subtitle:"Carga a carga",
+        desc:"Ao finalizar o treino, ele vai para o Histórico. O app compara automaticamente com a semana anterior e mostra se você progrediu.",
+        cta:"Próximo",
+      },
+      {
+        icon:"🤖",
+        title:"Análise semanal com IA",
+        subtitle:"Seu personal trainer digital",
+        desc:"Todo fim de semana, acesse a Análise da Semana. A IA avalia sua progressão, disposição e até suas fotos para dar recomendações reais.",
+        cta:"Começar agora",
+      },
     ];
 
     function formatDate(iso) {
-      const d = new Date(iso + "T00:00:00");
-      return d.toLocaleDateString("pt-BR", { weekday: "short", day: "numeric", month: "short" });
+      const d = new Date(iso+"T00:00:00");
+      return d.toLocaleDateString("pt-BR",{weekday:"short",day:"numeric",month:"short"});
     }
 
-    function todayISO() { return new Date().toISOString().slice(0, 10); }
-
-    // Retorna chave da semana ISO: "2025-W23"
     function getWeekKey(dateISO) {
-      const d = new Date((dateISO || todayISO()) + "T00:00:00");
-      const jan4 = new Date(d.getFullYear(), 0, 4);
-      const week = Math.ceil(((d - jan4) / 86400000 + jan4.getDay() + 1) / 7);
-      return d.getFullYear() + "-W" + String(week).padStart(2, "0");
+      const d = new Date((dateISO||todayISO())+"T00:00:00");
+      const jan4 = new Date(d.getFullYear(),0,4);
+      const week = Math.ceil(((d-jan4)/86400000+jan4.getDay()+1)/7);
+      return d.getFullYear()+"-W"+String(week).padStart(2,"0");
     }
 
     function getProgression(exName, currentSets, history) {
-      for (var i = 0; i < history.length; i++) {
-        var entry = history[i];
-        var found = entry.exercises.find(function(e) { return e.name === exName; });
+      for (let i=0;i<history.length;i++) {
+        const entry = history[i];
+        const found = entry.exercises.find(e=>e.name===exName);
         if (found) {
-          var prevVolume = found.sets.reduce(function(acc, s) { return acc + (s.reps * s.weight); }, 0);
-          var currVolume = currentSets.reduce(function(acc, s) { return acc + (s.reps * s.weight); }, 0);
-          var prevMaxWeight = Math.max.apply(null, found.sets.map(function(s) { return s.weight; }));
-          var currMaxWeight = Math.max.apply(null, currentSets.map(function(s) { return s.weight; }));
-          if (currMaxWeight > prevMaxWeight) return { type: "up", diff: currMaxWeight - prevMaxWeight, diffVolume: currVolume - prevVolume };
-          if (currMaxWeight < prevMaxWeight) return { type: "down", diff: prevMaxWeight - currMaxWeight, diffVolume: currVolume - prevVolume };
-          if (currVolume > prevVolume) return { type: "volume_up", diffVolume: currVolume - prevVolume };
-          if (currVolume < prevVolume) return { type: "volume_down", diffVolume: prevVolume - currVolume };
-          return { type: "equal" };
+          const prevVol  = found.sets.reduce((a,s)=>a+(s.reps*s.weight),0);
+          const currVol  = currentSets.reduce((a,s)=>a+(s.reps*s.weight),0);
+          const prevMax  = Math.max(...found.sets.map(s=>s.weight));
+          const currMax  = Math.max(...currentSets.map(s=>s.weight));
+          if (currMax>prevMax) return {type:"up",   diff:currMax-prevMax,   diffVolume:currVol-prevVol};
+          if (currMax<prevMax) return {type:"down", diff:prevMax-currMax,   diffVolume:currVol-prevVol};
+          if (currVol>prevVol) return {type:"volume_up",   diffVolume:currVol-prevVol};
+          if (currVol<prevVol) return {type:"volume_down", diffVolume:prevVol-currVol};
+          return {type:"equal"};
         }
       }
       return null;
     }
 
-    // Comprime imagem para base64 reduzido (max 800px, qualidade 0.7)
     function compressImage(file, callback) {
       const reader = new FileReader();
-      reader.onload = function(e) {
+      reader.onload = e => {
         const img = new Image();
-        img.onload = function() {
+        img.onload = () => {
           const canvas = document.createElement("canvas");
-          const MAX = 800;
-          let w = img.width, h = img.height;
-          if (w > h) { if (w > MAX) { h = h * MAX / w; w = MAX; } }
-          else { if (h > MAX) { w = w * MAX / h; h = MAX; } }
-          canvas.width = w; canvas.height = h;
-          canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-          callback(canvas.toDataURL("image/jpeg", 0.7).split(",")[1]);
+          const MAX=800; let w=img.width, h=img.height;
+          if (w>h){if(w>MAX){h=h*MAX/w;w=MAX;}}else{if(h>MAX){w=w*MAX/h;h=MAX;}}
+          canvas.width=w; canvas.height=h;
+          canvas.getContext("2d").drawImage(img,0,0,w,h);
+          callback(canvas.toDataURL("image/jpeg",0.7).split(",")[1]);
         };
         img.src = e.target.result;
       };
       reader.readAsDataURL(file);
     }
 
-    // ── COMPONENTE PRINCIPAL ──
-    function GymLog() {
-      const [workouts, setWorkouts]           = useState({});
-      const [history, setHistory]             = useState([]);
-      const [feelings, setFeelings]           = useState({});
-      const [weekPhotos, setWeekPhotos]       = useState({}); // todas as semanas
-      const [activeDay, setActiveDay]         = useState(getTodayKey());
-      const [modal, setModal]                 = useState(null);
-      const [editId, setEditId]               = useState(null);
-      const [loading, setLoading]             = useState(true);
-      const [saving, setSaving]               = useState(false);
-      const [deleteConfirm, setDeleteConfirm] = useState(null);
-      const [view, setView]                   = useState("treino");
-      const [exerciseName, setExerciseName]   = useState("");
-      const [timerSeconds, setTimerSeconds]   = useState(0);
-      const [timerRunning, setTimerRunning]   = useState(false);
-      const [timerOpen, setTimerOpen]         = useState(false);
-      const [sets, setSets]                   = useState([{ reps: "", weight: "" }]);
-      const [aiReport, setAiReport]           = useState("");
-      const [aiLoading, setAiLoading]         = useState(false);
-      const [aiError, setAiError]             = useState("");
-      const [todayEnergy, setTodayEnergy]     = useState(null);
-      const [todayResult, setTodayResult]     = useState(null);
-      // Chat
-      const [chatMessages, setChatMessages]   = useState([]); // [{ role, content, isText }]
-      const [chatInput, setChatInput]         = useState("");
-      const [chatLoading, setChatLoading]     = useState(false);
-      const chatEndRef = useRef(null);
-      // Fotos da semana atual
-      const currentWeekKey = getWeekKey(todayISO());
-      const currentPhotos = weekPhotos[currentWeekKey] || {};
-
-      useEffect(function() { loadData(); }, []);
-
-      useEffect(function() {
-        if (!timerRunning) return;
-        const interval = setInterval(function() { setTimerSeconds(function(s) { return s + 1; }); }, 1000);
-        return function() { clearInterval(interval); };
-      }, [timerRunning]);
-
-      useEffect(function() {
-        const today = todayISO();
-        if (feelings[today]) {
-          setTodayEnergy(feelings[today].energy || null);
-          setTodayResult(feelings[today].result || null);
+    // ── SUPABASE HELPERS ──
+    const db = {
+      async getWorkouts(userId) {
+        const {data} = await sb.from("workouts").select("day_key,exercises").eq("user_id",userId);
+        const map = {};
+        (data||[]).forEach(r=>{ map[r.day_key]=r.exercises; });
+        return map;
+      },
+      async saveWorkout(userId, dayKey, exercises) {
+        await sb.from("workouts").upsert({user_id:userId,day_key:dayKey,exercises},{onConflict:"user_id,day_key"});
+      },
+      async getHistory(userId) {
+        const {data} = await sb.from("workout_history").select("*").eq("user_id",userId).order("date",{ascending:false}).limit(100);
+        return (data||[]).map(r=>({date:r.date,day:r.day_key,exercises:r.exercises}));
+      },
+      async saveHistory(userId, date, dayKey, exercises) {
+        await sb.from("workout_history").upsert({user_id:userId,date,day_key:dayKey,exercises},{onConflict:"user_id,date,day_key"});
+      },
+      async getFeelings(userId) {
+        const {data} = await sb.from("feelings").select("date,energy,result").eq("user_id",userId).order("date",{ascending:false}).limit(60);
+        const map = {};
+        (data||[]).forEach(r=>{ map[r.date]={energy:r.energy,result:r.result}; });
+        return map;
+      },
+      async saveFeeling(userId, date, energy, result) {
+        await sb.from("feelings").upsert({user_id:userId,date,energy,result},{onConflict:"user_id,date"});
+      },
+      async getPhotos(userId) {
+        const {data} = await sb.from("week_photos").select("week_key,front_photo,side_photo,back_photo").eq("user_id",userId).order("week_key",{ascending:false}).limit(12);
+        const map = {};
+        (data||[]).forEach(r=>{ map[r.week_key]={front:r.front_photo,side:r.side_photo,back:r.back_photo}; });
+        return map;
+      },
+      async savePhoto(userId, weekKey, slot, base64) {
+        const col = slot+"_photo";
+        const {data:existing} = await sb.from("week_photos").select("id").eq("user_id",userId).eq("week_key",weekKey).single();
+        if (existing) {
+          await sb.from("week_photos").update({[col]:base64}).eq("user_id",userId).eq("week_key",weekKey);
         } else {
-          setTodayEnergy(null);
-          setTodayResult(null);
+          await sb.from("week_photos").insert({user_id:userId,week_key:weekKey,[col]:base64});
         }
-      }, [feelings]);
+      },
+      async removePhoto(userId, weekKey, slot) {
+        await sb.from("week_photos").update({[slot+"_photo"]:null}).eq("user_id",userId).eq("week_key",weekKey);
+      },
+      async getProfile(userId) {
+        const {data} = await sb.from("profiles").select("display_name,email").eq("id",userId).single();
+        return data;
+      },
+      async onboardingDone(userId) {
+        await sb.from("profiles").update({display_name:null}).eq("id",userId);
+      }
+    };
 
-      useEffect(function() {
-        if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: "smooth" });
-      }, [chatMessages]);
+    // ════════════════════════════════════════════════════════════
+    //  AUTH SCREEN
+    // ════════════════════════════════════════════════════════════
+    function AuthScreen({onAuth}) {
+      const [mode,    setMode]    = useState("login"); // login | signup | forgot
+      const [email,   setEmail]   = useState("");
+      const [pass,    setPass]    = useState("");
+      const [name,    setName]    = useState("");
+      const [loading, setLoading] = useState(false);
+      const [error,   setError]   = useState("");
+      const [msg,     setMsg]     = useState("");
+      const [showPass,setShowPass]= useState(false);
 
-      const loadData = async function() {
+      const handleEmail = async () => {
+        setError(""); setMsg(""); setLoading(true);
         try {
-          const r1 = await window.storage.get(STORAGE_KEY);
-          if (r1) setWorkouts(JSON.parse(r1.value));
-          const r2 = await window.storage.get(HISTORY_KEY);
-          if (r2) setHistory(JSON.parse(r2.value));
-          const r3 = await window.storage.get(FEELINGS_KEY);
-          if (r3) {
-            const f = JSON.parse(r3.value);
-            setFeelings(f);
-            const today = todayISO();
-            if (f[today]) { setTodayEnergy(f[today].energy || null); setTodayResult(f[today].result || null); }
+          if (mode==="forgot") {
+            const {error:e} = await sb.auth.resetPasswordForEmail(email,{redirectTo:window.location.href});
+            if (e) throw e;
+            setMsg("📧 Link enviado! Verifique seu email.");
+          } else if (mode==="signup") {
+            const {error:e} = await sb.auth.signUp({email,password:pass,options:{data:{full_name:name}}});
+            if (e) throw e;
+            setMsg("✅ Conta criada! Verifique seu email para confirmar.");
+          } else {
+            const {data,error:e} = await sb.auth.signInWithPassword({email,password:pass});
+            if (e) throw e;
+            onAuth(data.user);
           }
-          const r4 = await window.storage.get(PHOTOS_KEY);
-          if (r4) setWeekPhotos(JSON.parse(r4.value));
-        } catch(_) {}
+        } catch(e) {
+          const msgs = {
+            "Invalid login credentials":"Email ou senha incorretos.",
+            "Email not confirmed":"Confirme seu email antes de entrar.",
+            "User already registered":"Este email já está cadastrado.",
+            "Password should be at least 6 characters":"Senha deve ter pelo menos 6 caracteres.",
+          };
+          setError(msgs[e.message]||e.message);
+        }
         setLoading(false);
       };
 
-      const saveWorkouts = async function(data) {
+      const handleGoogle = async () => {
+        setError("");
+        const {error:e} = await sb.auth.signInWithOAuth({
+          provider:"google",
+          options:{redirectTo:window.location.href}
+        });
+        if (e) setError(e.message);
+      };
+
+      const handleApple = async () => {
+        setError("");
+        const {error:e} = await sb.auth.signInWithOAuth({
+          provider:"apple",
+          options:{redirectTo:window.location.href}
+        });
+        if (e) setError(e.message);
+      };
+
+      const s = {
+        wrap:     {minHeight:"100vh",background:C.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 20px",fontFamily:"'Barlow',sans-serif"},
+        logo:     {fontFamily:"Impact,'Arial Black',sans-serif",fontSize:52,letterSpacing:8,color:C.accent,lineHeight:1,marginBottom:4},
+        tagline:  {fontSize:11,letterSpacing:5,color:C.muted,textTransform:"uppercase",marginBottom:40},
+        card:     {width:"100%",maxWidth:380,background:C.surface,border:`1px solid ${C.border}`,borderRadius:20,padding:"28px 24px 24px"},
+        title:    {fontFamily:"Impact,'Arial Black',sans-serif",fontSize:22,letterSpacing:3,color:C.text,marginBottom:20},
+        label:    {display:"block",fontSize:10,fontWeight:700,letterSpacing:2,color:C.muted,textTransform:"uppercase",marginBottom:6},
+        input:    {width:"100%",background:"#111",border:`1px solid ${C.border}`,borderRadius:10,padding:"13px 14px",color:C.text,fontSize:15,outline:"none",fontFamily:"'Barlow',sans-serif",marginBottom:14},
+        btn:      {width:"100%",background:C.accent,color:"#000",border:"none",borderRadius:12,padding:"15px",fontSize:14,fontWeight:800,letterSpacing:1.5,cursor:"pointer",fontFamily:"'Barlow',sans-serif",marginBottom:10},
+        btnGhost: {width:"100%",background:"transparent",color:C.muted2,border:`1px solid ${C.border}`,borderRadius:12,padding:"13px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"'Barlow',sans-serif",marginBottom:10,display:"flex",alignItems:"center",justifyContent:"center",gap:8},
+        divider:  {display:"flex",alignItems:"center",gap:12,margin:"4px 0 14px",color:C.muted,fontSize:11},
+        divLine:  {flex:1,height:1,background:C.border},
+        error:    {background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:10,padding:"10px 14px",fontSize:13,color:C.red,marginBottom:14,lineHeight:1.5},
+        success:  {background:C.accentDim,border:`1px solid ${C.accent}44`,borderRadius:10,padding:"10px 14px",fontSize:13,color:C.accentText,marginBottom:14,lineHeight:1.5},
+        switch:   {textAlign:"center",fontSize:12,color:C.muted,marginTop:4},
+        link:     {color:C.accent,cursor:"pointer",fontWeight:700,background:"none",border:"none",fontSize:12,fontFamily:"'Barlow',sans-serif"},
+      };
+
+      return (
+        <div style={s.wrap}>
+          <style>{`@import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;600;700;800&display=swap');`}</style>
+          <div style={s.logo}>IRON LOG</div>
+          <div style={s.tagline}>Forge your progress</div>
+          <div style={s.card}>
+            <div style={s.title}>
+              {mode==="login"?"ENTRAR":mode==="signup"?"CRIAR CONTA":"RECUPERAR SENHA"}
+            </div>
+
+            {error && <div style={s.error}>{error}</div>}
+            {msg   && <div style={s.success}>{msg}</div>}
+
+            {mode==="signup" && (
+              <>
+                <label style={s.label}>Seu nome</label>
+                <input style={s.input} placeholder="Como te chamamos?" value={name} onChange={e=>setName(e.target.value)} />
+              </>
+            )}
+
+            <label style={s.label}>Email</label>
+            <input style={s.input} type="email" placeholder="seu@email.com" value={email} onChange={e=>setEmail(e.target.value)}
+              onKeyDown={e=>{if(e.key==="Enter")handleEmail();}} />
+
+            {mode!=="forgot" && (
+              <>
+                <label style={s.label}>Senha</label>
+                <div style={{position:"relative",marginBottom:14}}>
+                  <input style={{...s.input,marginBottom:0,paddingRight:44}} type={showPass?"text":"password"} placeholder={mode==="signup"?"Mínimo 6 caracteres":"••••••••"} value={pass} onChange={e=>setPass(e.target.value)}
+                    onKeyDown={e=>{if(e.key==="Enter")handleEmail();}} />
+                  <button onClick={()=>setShowPass(p=>!p)} style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:4}}>{showPass?"🙈":"👁"}</button>
+                </div>
+              </>
+            )}
+
+            {mode==="login" && (
+              <div style={{textAlign:"right",marginBottom:14,marginTop:-8}}>
+                <button style={s.link} onClick={()=>{setMode("forgot");setError("");setMsg("");}}>Esqueci minha senha</button>
+              </div>
+            )}
+
+            <button style={{...s.btn,opacity:loading?0.6:1}} onClick={handleEmail} disabled={loading}>
+              {loading?"...":(mode==="login"?"ENTRAR":mode==="signup"?"CRIAR CONTA":"ENVIAR LINK")}
+            </button>
+
+            {mode!=="forgot" && (
+              <>
+                <div style={s.divider}><div style={s.divLine}/><span>ou</span><div style={s.divLine}/></div>
+
+                <button style={s.btnGhost} onClick={handleGoogle}>
+                  <svg width="18" height="18" viewBox="0 0 18 18"><path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615z" fill="#4285F4"/><path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z" fill="#34A853"/><path d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z" fill="#FBBC05"/><path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 6.29C4.672 4.163 6.656 3.58 9 3.58z" fill="#EA4335"/></svg>
+                  Continuar com Google
+                </button>
+
+                <button style={s.btnGhost} onClick={handleApple}>
+                  <svg width="18" height="18" viewBox="0 0 814 1000" fill={C.text}><path d="M788.1 340.9c-5.8 4.5-108.2 62.2-108.2 190.5 0 148.4 130.3 200.9 134.2 202.2-.6 3.2-20.7 71.9-68.7 141.9-42.8 61.6-87.5 123.1-155.5 123.1s-85.5-39.5-164-39.5c-76 0-103.7 40.8-165.9 40.8s-105-57.8-155.5-127.4C46 376.8 0 228.2 0 190.3c0-165.8 108-253.4 214.3-253.4 58.5 0 107.5 38.3 144.4 38.3 35.1 0 90.3-40.8 158.1-40.8 25.5 0 108.2 2.6 168.1 81.2zm-87.8-105.3c28.6-35.8 50.5-86.8 50.5-137.7 0-7.1-.6-14.3-1.9-20.1-47.7 1.8-104.2 32.5-138.2 73.7-25.5 28.5-50.5 79.4-50.5 131.9 0 8.3 1.3 16.6 1.9 19.2 2.6.6 6.5 1.3 10.4 1.3 43.4 0 96.5-29.9 127.8-68.3z"/></svg>
+                  Continuar com Apple
+                </button>
+              </>
+            )}
+
+            <div style={s.switch}>
+              {mode==="login" ? (
+                <>Não tem conta? <button style={s.link} onClick={()=>{setMode("signup");setError("");setMsg("");}}>Criar agora</button></>
+              ) : (
+                <>Já tem conta? <button style={s.link} onClick={()=>{setMode("login");setError("");setMsg("");}}>Entrar</button></>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════
+    //  ONBOARDING SCREEN
+    // ════════════════════════════════════════════════════════════
+    function OnboardingScreen({onDone}) {
+      const [step, setStep] = useState(0);
+      const cur = ONBOARDING_STEPS[step];
+      const isLast = step===ONBOARDING_STEPS.length-1;
+
+      return (
+        <div style={{minHeight:"100vh",background:C.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"32px 24px",fontFamily:"'Barlow',sans-serif"}}>
+          <style>{`@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@400;600;700;800&display=swap');`}</style>
+
+          {/* Step dots */}
+          <div style={{display:"flex",gap:8,marginBottom:48}}>
+            {ONBOARDING_STEPS.map((_,i)=>(
+              <div key={i} style={{width:i===step?24:8,height:8,borderRadius:4,background:i===step?C.accent:C.border,transition:"all 0.3s"}} />
+            ))}
+          </div>
+
+          {/* Content */}
+          <div style={{textAlign:"center",maxWidth:340,marginBottom:48}}>
+            <div style={{fontSize:72,marginBottom:24,lineHeight:1}}>{cur.icon}</div>
+            <div style={{fontFamily:"Impact,'Arial Black',sans-serif",fontSize:30,letterSpacing:3,color:C.accent,lineHeight:1,marginBottom:6}}>{cur.title}</div>
+            <div style={{fontSize:12,letterSpacing:3,color:C.muted,textTransform:"uppercase",marginBottom:20}}>{cur.subtitle}</div>
+            <div style={{fontSize:15,color:C.muted2,lineHeight:1.7}}>{cur.desc}</div>
+          </div>
+
+          {/* CTA */}
+          <div style={{width:"100%",maxWidth:340}}>
+            <button
+              onClick={()=>{ isLast ? onDone() : setStep(s=>s+1); }}
+              style={{width:"100%",background:C.accent,color:"#000",border:"none",borderRadius:14,padding:"17px",fontSize:15,fontWeight:800,letterSpacing:1.5,cursor:"pointer",fontFamily:"'Barlow',sans-serif"}}
+            >
+              {cur.cta}
+            </button>
+            {!isLast && (
+              <button onClick={onDone} style={{width:"100%",marginTop:12,background:"transparent",border:"none",color:C.muted,fontSize:13,cursor:"pointer",fontFamily:"'Barlow',sans-serif",padding:"8px"}}>
+                Pular introdução
+              </button>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════
+    //  MAIN APP
+    // ════════════════════════════════════════════════════════════
+    function GymLog({user, onSignOut}) {
+      const [workouts,   setWorkouts]   = useState({});
+      const [history,    setHistory]    = useState([]);
+      const [feelings,   setFeelings]   = useState({});
+      const [weekPhotos, setWeekPhotos] = useState({});
+      const [activeDay,  setActiveDay]  = useState(getTodayKey());
+      const [modal,      setModal]      = useState(null);
+      const [editId,     setEditId]     = useState(null);
+      const [loading,    setLoading]    = useState(true);
+      const [saving,     setSaving]     = useState(false);
+      const [deleteConfirm, setDeleteConfirm] = useState(null);
+      const [view,       setView]       = useState("treino");
+      const [exerciseName, setExerciseName] = useState("");
+      const [timerSeconds, setTimerSeconds] = useState(0);
+      const [timerRunning, setTimerRunning] = useState(false);
+      const [timerOpen,    setTimerOpen]    = useState(false);
+      const [sets,       setSets]       = useState([{reps:"",weight:""}]);
+      const [aiReport,   setAiReport]   = useState("");
+      const [aiLoading,  setAiLoading]  = useState(false);
+      const [aiError,    setAiError]    = useState("");
+      const [todayEnergy,setTodayEnergy]= useState(null);
+      const [todayResult,setTodayResult]= useState(null);
+      const [chatMessages, setChatMessages] = useState([]);
+      const [chatInput,    setChatInput]    = useState("");
+      const [chatLoading,  setChatLoading]  = useState(false);
+      const [profile,      setProfile]      = useState(null);
+      const [menuOpen,     setMenuOpen]     = useState(false);
+      // ── MIGRAÇÃO localStorage → Supabase ──
+      const [showMigrate, setShowMigrate] = useState(false);
+      const [migrating,   setMigrating]   = useState(false);
+      
+      useEffect(()=>{
+        const hasLocal =
+          localStorage.getItem("gymlog-workouts-v1") ||
+          localStorage.getItem("gymlog-history-v1")  ||
+          localStorage.getItem("gymlog-feelings-v1") ||
+          localStorage.getItem("gymlog-photos-v1");
+        if (hasLocal) setShowMigrate(true);
+      },[]);
+      
+      const runMigration = async () => {
+        if (migrating) return;
+        setMigrating(true);
+        try {
+          const rawW = localStorage.getItem("gymlog-workouts-v1");
+          if (rawW) {
+            const wData = JSON.parse(rawW);
+            for (const dayKey of Object.keys(wData)) {
+              if (wData[dayKey] && wData[dayKey].length > 0) {
+                await db.saveWorkout(user.id, dayKey, wData[dayKey]);
+              }
+            }
+          }
+          const rawH = localStorage.getItem("gymlog-history-v1");
+          if (rawH) {
+            const hData = JSON.parse(rawH);
+            for (const entry of hData) {
+              await db.saveHistory(user.id, entry.date, entry.day, entry.exercises);
+            }
+          }
+          const rawF = localStorage.getItem("gymlog-feelings-v1");
+          if (rawF) {
+            const fData = JSON.parse(rawF);
+            for (const date of Object.keys(fData)) {
+              const f = fData[date];
+              await db.saveFeeling(user.id, date, f.energy||null, f.result||null);
+            }
+          }
+          const rawP = localStorage.getItem("gymlog-photos-v1");
+          if (rawP) {
+            const pData = JSON.parse(rawP);
+            for (const weekKey of Object.keys(pData)) {
+              const photos = pData[weekKey];
+              if (photos.front) await db.savePhoto(user.id, weekKey, "front", photos.front);
+              if (photos.side)  await db.savePhoto(user.id, weekKey, "side",  photos.side);
+              if (photos.back)  await db.savePhoto(user.id, weekKey, "back",  photos.back);
+            }
+          }
+          localStorage.removeItem("gymlog-workouts-v1");
+          localStorage.removeItem("gymlog-history-v1");
+          localStorage.removeItem("gymlog-feelings-v1");
+          localStorage.removeItem("gymlog-photos-v1");
+          setShowMigrate(false);
+          await loadAll();
+          alert("✅ Dados migrados com sucesso!");
+        } catch(e) {
+          alert("❌ Erro na migração: " + e.message);
+        }
+        setMigrating(false);
+      };
+      const chatEndRef = useRef(null);
+
+      const currentWeekKey = getWeekKey(todayISO());
+      const currentPhotos  = weekPhotos[currentWeekKey] || {};
+
+      useEffect(()=>{ loadAll(); },[]);
+
+      useEffect(()=>{
+        if (!timerRunning) return;
+        const t = setInterval(()=>setTimerSeconds(s=>s+1),1000);
+        return ()=>clearInterval(t);
+      },[timerRunning]);
+
+      useEffect(()=>{
+        const today = todayISO();
+        if (feelings[today]) {
+          setTodayEnergy(feelings[today].energy||null);
+          setTodayResult(feelings[today].result||null);
+        } else { setTodayEnergy(null); setTodayResult(null); }
+      },[feelings]);
+
+      useEffect(()=>{
+        if (chatEndRef.current) chatEndRef.current.scrollIntoView({behavior:"smooth"});
+      },[chatMessages]);
+
+      const loadAll = async () => {
+        try {
+          const [w,h,f,p,prof] = await Promise.all([
+            db.getWorkouts(user.id),
+            db.getHistory(user.id),
+            db.getFeelings(user.id),
+            db.getPhotos(user.id),
+            db.getProfile(user.id),
+          ]);
+          setWorkouts(w); setHistory(h); setFeelings(f); setWeekPhotos(p); setProfile(prof);
+          const today = todayISO();
+          if (f[today]) { setTodayEnergy(f[today].energy||null); setTodayResult(f[today].result||null); }
+        } catch(e) { console.error(e); }
+        setLoading(false);
+      };
+
+      const saveWorkout = async (dayKey, exercises) => {
         setSaving(true);
-        try { await window.storage.set(STORAGE_KEY, JSON.stringify(data)); } catch(e) {}
-        setTimeout(function() { setSaving(false); }, 600);
-      };
-      const saveHistory  = async function(data) { try { await window.storage.set(HISTORY_KEY,  JSON.stringify(data)); } catch(e) {} };
-      const saveFeelings = async function(data) { try { await window.storage.set(FEELINGS_KEY, JSON.stringify(data)); } catch(e) {} };
-      const savePhotos   = async function(data) { try { await window.storage.set(PHOTOS_KEY,   JSON.stringify(data)); } catch(e) {} };
-
-      const saveEnergy = async function(value) {
-        const today = todayISO();
-        const updated = { ...feelings, [today]: { ...(feelings[today] || {}), energy: value } };
-        setFeelings(updated); setTodayEnergy(value);
-        await saveFeelings(updated); setModal(null);
+        try { await db.saveWorkout(user.id, dayKey, exercises); } catch(e){}
+        setTimeout(()=>setSaving(false),600);
       };
 
-      const saveResult = async function(value) {
+      const saveEnergy = async (value) => {
         const today = todayISO();
-        const updated = { ...feelings, [today]: { ...(feelings[today] || {}), result: value } };
-        setFeelings(updated); setTodayResult(value);
-        await saveFeelings(updated); setModal(null);
+        const cur   = feelings[today]||{};
+        const upd   = {...feelings,[today]:{...cur,energy:value}};
+        setFeelings(upd); setTodayEnergy(value);
+        await db.saveFeeling(user.id, today, value, cur.result||null);
+        setModal(null);
+      };
+
+      const saveResult = async (value) => {
+        const today = todayISO();
+        const cur   = feelings[today]||{};
+        const upd   = {...feelings,[today]:{...cur,result:value}};
+        setFeelings(upd); setTodayResult(value);
+        await db.saveFeeling(user.id, today, cur.energy||null, value);
+        setModal(null);
         await doFinishWorkout();
       };
 
-      const doFinishWorkout = async function() {
-        const exs = workouts[activeDay] || [];
-        if (exs.length === 0) return;
+      const doFinishWorkout = async () => {
+        const exs = workouts[activeDay]||[];
+        if (exs.length===0) return;
         const today = todayISO();
-        const entry = { date: today, day: activeDay, exercises: exs };
-        const updated = [entry, ...history.filter(function(h) { return !(h.date === today && h.day === activeDay); })];
-        setHistory(updated); await saveHistory(updated);
+        await db.saveHistory(user.id, today, activeDay, exs);
+        const entry = {date:today,day:activeDay,exercises:exs};
+        setHistory(prev=>[entry,...prev.filter(h=>!(h.date===today&&h.day===activeDay))]);
         alert("✅ Treino salvo no histórico!");
       };
 
-      const finishWorkout = function() {
-        const exs = workouts[activeDay] || [];
-        if (exs.length === 0) return;
-        if (!todayEnergy) { setModal("energy_then_result"); } else { setModal("result"); }
+      const finishWorkout = () => {
+        const exs = workouts[activeDay]||[];
+        if (exs.length===0) return;
+        if (!todayEnergy) setModal("energy_then_result");
+        else setModal("result");
       };
 
-      // Upload de foto
-      const handlePhotoUpload = function(slot, file) {
+      const handlePhotoUpload = (slot, file) => {
         if (!file) return;
-        compressImage(file, function(base64) {
-          const updated = { ...weekPhotos, [currentWeekKey]: { ...currentPhotos, [slot]: base64 } };
-          setWeekPhotos(updated);
-          savePhotos(updated);
+        compressImage(file, async (base64)=>{
+          const upd = {...weekPhotos,[currentWeekKey]:{...currentPhotos,[slot]:base64}};
+          setWeekPhotos(upd);
+          await db.savePhoto(user.id, currentWeekKey, slot, base64);
         });
       };
 
-      const removePhoto = function(slot) {
-        const updated = { ...weekPhotos };
-        if (updated[currentWeekKey]) {
-          updated[currentWeekKey] = { ...updated[currentWeekKey] };
-          delete updated[currentWeekKey][slot];
-        }
-        setWeekPhotos(updated); savePhotos(updated);
+      const removePhoto = async (slot) => {
+        const upd = {...weekPhotos};
+        if (upd[currentWeekKey]) { upd[currentWeekKey]={...upd[currentWeekKey]}; delete upd[currentWeekKey][slot]; }
+        setWeekPhotos(upd);
+        await db.removePhoto(user.id, currentWeekKey, slot);
       };
 
-      // ── MONTA CONTEXTO COMPLETO PARA A IA ──
-      const buildAIContext = function(photos) {
-        const sevenDaysAgo = new Date();
-        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-        const recentHistory = history.filter(function(h) { return new Date(h.date + "T00:00:00") >= sevenDaysAgo; });
-        const olderHistory  = history.filter(function(h) { return new Date(h.date + "T00:00:00") < sevenDaysAgo; });
-
+      // ── AI CONTEXT ──
+      const buildAIContext = (photos) => {
+        const sevenDaysAgo = new Date(); sevenDaysAgo.setDate(sevenDaysAgo.getDate()-7);
+        const recent = history.filter(h=>new Date(h.date+"T00:00:00")>=sevenDaysAgo);
+        const older  = history.filter(h=>new Date(h.date+"T00:00:00")< sevenDaysAgo);
         const comparativo = [];
-        recentHistory.forEach(function(entry) {
-          entry.exercises.forEach(function(ex) {
-            var anterior = null;
-            for (var i = 0; i < olderHistory.length; i++) {
-              var found = olderHistory[i].exercises.find(function(e) { return e.name === ex.name; });
-              if (found) { anterior = { data: olderHistory[i].date, sets: found.sets }; break; }
+        recent.forEach(entry=>{
+          entry.exercises.forEach(ex=>{
+            let anterior=null;
+            for (let i=0;i<older.length;i++){
+              const f=older[i].exercises.find(e=>e.name===ex.name);
+              if(f){anterior={data:older[i].date,sets:f.sets};break;}
             }
-            var currVolume    = ex.sets.reduce(function(acc, s) { return acc + (s.reps * s.weight); }, 0);
-            var currMaxKg     = Math.max.apply(null, ex.sets.map(function(s) { return s.weight; }));
-            var currTotalReps = ex.sets.reduce(function(acc, s) { return acc + s.reps; }, 0);
-            var item = {
-              exercicio: ex.name, dia: entry.day, data: entry.date,
-              series_esta_semana: ex.sets.map(function(s, i) { return "S"+(i+1)+": "+s.reps+"rep x "+s.weight+"kg"; }),
-              volume_total_kg: currVolume, carga_maxima_kg: currMaxKg, total_repeticoes: currTotalReps
-            };
-            if (anterior) {
-              var prevVolume    = anterior.sets.reduce(function(acc, s) { return acc + (s.reps * s.weight); }, 0);
-              var prevMaxKg     = Math.max.apply(null, anterior.sets.map(function(s) { return s.weight; }));
-              var prevTotalReps = anterior.sets.reduce(function(acc, s) { return acc + s.reps; }, 0);
-              item.ultima_vez          = anterior.data;
-              item.series_anterior     = anterior.sets.map(function(s, i) { return "S"+(i+1)+": "+s.reps+"rep x "+s.weight+"kg"; });
-              item.variacao_carga_kg   = currMaxKg - prevMaxKg;
-              item.variacao_volume_kg  = currVolume - prevVolume;
-              item.variacao_repeticoes = currTotalReps - prevTotalReps;
-              item.status = currMaxKg > prevMaxKg ? "PROGREDIU CARGA" :
-                            currMaxKg < prevMaxKg ? "REGREDIU CARGA" :
-                            currVolume > prevVolume ? "MAIS VOLUME (mesma carga)" :
-                            currVolume < prevVolume ? "MENOS VOLUME" : "IGUAL";
-            } else { item.status = "PRIMEIRO REGISTRO"; }
+            const cV=ex.sets.reduce((a,s)=>a+(s.reps*s.weight),0);
+            const cM=Math.max(...ex.sets.map(s=>s.weight));
+            const cR=ex.sets.reduce((a,s)=>a+s.reps,0);
+            const item={exercicio:ex.name,dia:entry.day,data:entry.date,series_esta_semana:ex.sets.map((s,i)=>`S${i+1}: ${s.reps}rep x ${s.weight}kg`),volume_total_kg:cV,carga_maxima_kg:cM,total_repeticoes:cR};
+            if(anterior){
+              const pV=anterior.sets.reduce((a,s)=>a+(s.reps*s.weight),0);
+              const pM=Math.max(...anterior.sets.map(s=>s.weight));
+              const pR=anterior.sets.reduce((a,s)=>a+s.reps,0);
+              item.ultima_vez=anterior.data; item.series_anterior=anterior.sets.map((s,i)=>`S${i+1}: ${s.reps}rep x ${s.weight}kg`);
+              item.variacao_carga_kg=cM-pM; item.variacao_volume_kg=cV-pV; item.variacao_repeticoes=cR-pR;
+              item.status=cM>pM?"PROGREDIU CARGA":cM<pM?"REGREDIU CARGA":cV>pV?"MAIS VOLUME (mesma carga)":cV<pV?"MENOS VOLUME":"IGUAL";
+            } else {item.status="PRIMEIRO REGISTRO";}
             comparativo.push(item);
           });
         });
-
-        const feelingsData = [];
-        Object.keys(feelings).forEach(function(date) {
-          const d = new Date(date + "T00:00:00");
-          if (d >= sevenDaysAgo) {
-            const energyOpt = ENERGY_OPTIONS.find(function(e) { return e.value === feelings[date].energy; });
-            const resultOpt = RESULT_OPTIONS.find(function(r) { return r.value === feelings[date].result; });
-            feelingsData.push({ data: date, disposicao: energyOpt ? energyOpt.emoji+" "+energyOpt.label : "não registrado", resultado: resultOpt ? resultOpt.emoji+" "+resultOpt.label : "não registrado" });
+        const feelingsData=[];
+        Object.keys(feelings).forEach(date=>{
+          const d=new Date(date+"T00:00:00");
+          if(d>=sevenDaysAgo){
+            const eO=ENERGY_OPTIONS.find(e=>e.value===feelings[date].energy);
+            const rO=RESULT_OPTIONS.find(r=>r.value===feelings[date].result);
+            feelingsData.push({data:date,disposicao:eO?eO.emoji+" "+eO.label:"não registrado",resultado:rO?rO.emoji+" "+rO.label:"não registrado"});
           }
         });
-
-        const hasPhotos = photos && (photos.front || photos.side || photos.back);
-        const systemPrompt = "Você é um personal trainer experiente e nutricionista esportivo. O atleta é NATURAL (não usa anabolizantes). " +
-          "Analise os dados de treino e" + (hasPhotos ? " as fotos do físico enviadas" : "") + ". " +
-          "Seja direto, motivador e técnico. Use linguagem informal mas profissional. " +
-          "Quando analisar as fotos, avalie: definição muscular atual, grupos musculares mais desenvolvidos, grupos que precisam de mais atenção, simetria e pontos de melhora realistas para um atleta natural. " +
-          "Tenha memória de tudo que foi discutido nesta conversa para manter contexto.";
-
-        const textContent = "COMPARATIVO DE EXERCÍCIOS (esta semana vs semana anterior):\n" +
-          JSON.stringify(comparativo, null, 2) +
-          "\n\nDISPOSIÇÃO E RESULTADO DOS TREINOS DA SEMANA:\n" +
-          JSON.stringify(feelingsData, null, 2) +
-          (hasPhotos ? "\n\nFOTOS DO FÍSICO: As imagens enviadas são: " + [photos.front ? "FRENTE" : null, photos.side ? "PERFIL" : null, photos.back ? "COSTAS" : null].filter(Boolean).join(", ") + ". Analise a composição corporal visível nas fotos." : "\n\n(Nenhuma foto do físico enviada esta semana)") +
-          "\n\nAnalise:\n1. Progressão de cargas e volume vs semana anterior\n2. Relação entre disposição e resultado\n" +
-          (hasPhotos ? "3. Avaliação do físico atual (definição, músculos desenvolvidos, pontos de atenção para atleta natural)\n4. Quais grupos musculares seria mais vantajoso desenvolver agora\n5. " : "3. ") +
-          "2-3 recomendações práticas para a próxima semana\n" + (hasPhotos ? "6." : "4.") + " Frase motivacional final\n\nResponda em português brasileiro.";
-
-        return { systemPrompt, textContent, comparativo, feelingsData };
+        const hasPhotos=photos&&(photos.front||photos.side||photos.back);
+        const systemPrompt="Você é um personal trainer experiente e nutricionista esportivo. O atleta é NATURAL (não usa anabolizantes). Analise os dados de treino e"+(hasPhotos?" as fotos do físico enviadas":"")+". Seja direto, motivador e técnico. Use linguagem informal mas profissional. Quando analisar as fotos, avalie: definição muscular atual, grupos musculares mais desenvolvidos, grupos que precisam de mais atenção, simetria e pontos de melhora realistas para um atleta natural. Tenha memória de tudo que foi discutido nesta conversa para manter contexto.";
+        const textContent="COMPARATIVO DE EXERCÍCIOS (esta semana vs semana anterior):\n"+JSON.stringify(comparativo,null,2)+"\n\nDISPOSIÇÃO E RESULTADO DOS TREINOS DA SEMANA:\n"+JSON.stringify(feelingsData,null,2)+(hasPhotos?"\n\nFOTOS DO FÍSICO: As imagens enviadas são: "+[photos.front?"FRENTE":null,photos.side?"PERFIL":null,photos.back?"COSTAS":null].filter(Boolean).join(", ")+". Analise a composição corporal visível nas fotos.":"\n\n(Nenhuma foto do físico enviada esta semana)")+"\n\nAnalise:\n1. Progressão de cargas e volume vs semana anterior\n2. Relação entre disposição e resultado\n"+(hasPhotos?"3. Avaliação do físico atual (definição, músculos desenvolvidos, pontos de atenção para atleta natural)\n4. Quais grupos musculares seria mais vantajoso desenvolver agora\n5. ":"3. ")+"2-3 recomendações práticas para a próxima semana\n"+(hasPhotos?"6.":"4.")+" Frase motivacional final\n\nResponda em português brasileiro.";
+        return {systemPrompt,textContent};
       };
 
-      // ── GERA ANÁLISE INICIAL ──
-      const generateAIReport = async function() {
-        const apiUrl = window.CLAUDE_API_KEY;
-        if (!apiUrl || apiUrl === "COLOQUE_SUA_CHAVE_AQUI") {
-          setAiError("⚠️ URL da API não configurada.");
-          return;
-        }
+      const generateAIReport = async () => {
+        const apiUrl = window.AI_API_URL;
         setAiLoading(true); setAiError(""); setAiReport(""); setChatMessages([]);
-
         try {
-          const photos = weekPhotos[currentWeekKey] || {};
-          const { systemPrompt, textContent } = buildAIContext(photos);
-          const hasPhotos = photos.front || photos.side || photos.back;
-
-          // Monta content com texto + imagens
+          const photos = weekPhotos[currentWeekKey]||{};
+          const {systemPrompt,textContent} = buildAIContext(photos);
+          const hasPhotos = photos.front||photos.side||photos.back;
           const userContent = [];
-          if (hasPhotos) {
-            if (photos.front) userContent.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: photos.front } });
-            if (photos.side)  userContent.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: photos.side  } });
-            if (photos.back)  userContent.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: photos.back  } });
+          if(hasPhotos){
+            if(photos.front) userContent.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:photos.front}});
+            if(photos.side)  userContent.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:photos.side}});
+            if(photos.back)  userContent.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:photos.back}});
           }
-          userContent.push({ type: "text", text: textContent });
-
-          const response = await fetch(apiUrl + "analyze", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              system: systemPrompt,
-              messages: [{ role: "user", content: userContent }]
-            })
-          });
-
-          if (!response.ok) {
-            const err = await response.json();
-            throw new Error(err.error ? err.error.message : "Erro na API");
-          }
-
-          const data = await response.json();
-          const text = data.content && data.content[0] ? data.content[0].text : "Sem resposta.";
+          userContent.push({type:"text",text:textContent});
+          const res = await fetch(apiUrl+"analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({system:systemPrompt,messages:[{role:"user",content:userContent}]})});
+          if(!res.ok){const err=await res.json();throw new Error(err.error?.message||"Erro na API");}
+          const data = await res.json();
+          const text = data.content&&data.content[0]?data.content[0].text:"Sem resposta.";
           setAiReport(text);
-
-          // Inicia histórico do chat com a análise como primeira mensagem do assistente
-          setChatMessages([{ role: "assistant", content: text }]);
-        } catch(e) {
-          setAiError("❌ Erro: " + e.message);
-        }
+          setChatMessages([{role:"assistant",content:text}]);
+        } catch(e){ setAiError("❌ Erro: "+e.message); }
         setAiLoading(false);
       };
 
-      // ── CHAT COM A IA ──
-      const sendChatMessage = async function() {
+      const sendChatMessage = async () => {
         const msg = chatInput.trim();
-        if (!msg || chatLoading) return;
-        const apiUrl = window.CLAUDE_API_KEY;
-
-        const newMessages = [...chatMessages, { role: "user", content: msg }];
-        setChatMessages(newMessages);
-        setChatInput("");
-        setChatLoading(true);
-
+        if(!msg||chatLoading) return;
+        const apiUrl = window.AI_API_URL;
+        const newMessages = [...chatMessages,{role:"user",content:msg}];
+        setChatMessages(newMessages); setChatInput(""); setChatLoading(true);
         try {
-          const photos = weekPhotos[currentWeekKey] || {};
-          const { systemPrompt, textContent } = buildAIContext(photos);
-          const hasPhotos = photos.front || photos.side || photos.back;
-
-          // Reconstrói histórico completo para a API
-          // Primeira mensagem do usuário inclui os dados + fotos
-          const firstUserContent = [];
-          if (hasPhotos) {
-            if (photos.front) firstUserContent.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: photos.front } });
-            if (photos.side)  firstUserContent.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: photos.side  } });
-            if (photos.back)  firstUserContent.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: photos.back  } });
+          const photos = weekPhotos[currentWeekKey]||{};
+          const {systemPrompt,textContent} = buildAIContext(photos);
+          const hasPhotos = photos.front||photos.side||photos.back;
+          const firstUserContent=[];
+          if(hasPhotos){
+            if(photos.front) firstUserContent.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:photos.front}});
+            if(photos.side)  firstUserContent.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:photos.side}});
+            if(photos.back)  firstUserContent.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:photos.back}});
           }
-          firstUserContent.push({ type: "text", text: textContent });
-
-          // Monta mensagens para API: [user_com_dados, assistant_analise, ...chat_history]
-          const apiMessages = [
-            { role: "user",      content: firstUserContent },
-            { role: "assistant", content: chatMessages[0] ? chatMessages[0].content : "Entendido, analisei seus dados." },
-            ...newMessages.slice(1).map(function(m) { return { role: m.role, content: m.content }; })
-          ];
-
-          const response = await fetch(apiUrl + "analyze", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ system: systemPrompt, messages: apiMessages })
-          });
-
-          if (!response.ok) throw new Error("Erro na API");
-          const data = await response.json();
-          const text = data.content && data.content[0] ? data.content[0].text : "Sem resposta.";
-          setChatMessages(function(prev) { return [...prev, { role: "assistant", content: text }]; });
-        } catch(e) {
-          setChatMessages(function(prev) { return [...prev, { role: "assistant", content: "❌ Erro ao responder: " + e.message }]; });
-        }
+          firstUserContent.push({type:"text",text:textContent});
+          const apiMessages=[{role:"user",content:firstUserContent},{role:"assistant",content:chatMessages[0]?chatMessages[0].content:"Entendido, analisei seus dados."},...newMessages.slice(1).map(m=>({role:m.role,content:m.content}))];
+          const res=await fetch(apiUrl+"analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({system:systemPrompt,messages:apiMessages})});
+          if(!res.ok) throw new Error("Erro na API");
+          const data=await res.json();
+          const text=data.content&&data.content[0]?data.content[0].text:"Sem resposta.";
+          setChatMessages(prev=>[...prev,{role:"assistant",content:text}]);
+        } catch(e){ setChatMessages(prev=>[...prev,{role:"assistant",content:"❌ Erro ao responder: "+e.message}]); }
         setChatLoading(false);
       };
 
-      const dayExercises = workouts[activeDay] || [];
-      const currentDay   = DAYS.find(function(d) { return d.key === activeDay; });
+      // ── EXERCISE CRUD ──
+      const dayExercises = workouts[activeDay]||[];
+      const currentDay   = DAYS.find(d=>d.key===activeDay);
       const todayKey     = getTodayKey();
+      const totalSetsForDay = key => (workouts[key]||[]).reduce((acc,ex)=>acc+ex.sets.length,0);
 
-      const openAdd  = function() { setEditId(null); setExerciseName(""); setSets([{ reps: "", weight: "" }]); setModal("add"); };
-      const openEdit = function(ex) { setEditId(ex.id); setExerciseName(ex.name); setSets(ex.sets.map(function(s) { return { reps: String(s.reps), weight: String(s.weight) }; })); setModal("edit"); };
-      const closeModal = function() { setModal(null); setEditId(null); };
-      const addSet    = function() { setSets(function(prev) { return [...prev, { reps: "", weight: "" }]; }); };
-      const removeSet = function(i) { if (sets.length > 1) setSets(sets.filter(function(_, idx) { return idx !== i; })); };
-      const updateSet = function(i, field, val) { const n = [...sets]; n[i] = { ...n[i], [field]: val }; setSets(n); };
-      const totalSetsForDay = function(key) { return (workouts[key] || []).reduce(function(acc, ex) { return acc + ex.sets.length; }, 0); };
+      const openAdd  = () => { setEditId(null); setExerciseName(""); setSets([{reps:"",weight:""}]); setModal("add"); };
+      const openEdit = ex => { setEditId(ex.id); setExerciseName(ex.name); setSets(ex.sets.map(s=>({reps:String(s.reps),weight:String(s.weight)}))); setModal("edit"); };
+      const closeModal = () => { setModal(null); setEditId(null); };
+      const addSet    = () => setSets(p=>[...p,{reps:"",weight:""}]);
+      const removeSet = i  => { if(sets.length>1) setSets(sets.filter((_,idx)=>idx!==i)); };
+      const updateSet = (i,field,val) => { const n=[...sets]; n[i]={...n[i],[field]:val}; setSets(n); };
 
-      const saveExercise = async function() {
-        if (!exerciseName.trim()) return;
-        const validSets = sets.filter(function(s) { return s.reps !== "" && s.weight !== ""; }).map(function(s) { return { reps: Number(s.reps), weight: Number(s.weight) }; });
-        if (validSets.length === 0) return;
-        const updated = { ...workouts };
-        const list = [...(updated[activeDay] || [])];
+      const saveExercise = async () => {
+        if(!exerciseName.trim()) return;
+        const validSets = sets.filter(s=>s.reps!==""&&s.weight!=="").map(s=>({reps:Number(s.reps),weight:Number(s.weight)}));
+        if(validSets.length===0) return;
+        const updated = {...workouts};
+        const list = [...(updated[activeDay]||[])];
         if (editId) {
-          const idx = list.findIndex(function(e) { return e.id === editId; });
-          if (idx !== -1) list[idx] = { id: editId, name: exerciseName.trim(), sets: validSets };
+          const idx=list.findIndex(e=>e.id===editId);
+          if(idx!==-1) list[idx]={id:editId,name:exerciseName.trim(),sets:validSets};
         } else {
-          list.push({ id: String(Date.now()), name: exerciseName.trim(), sets: validSets });
+          list.push({id:String(Date.now()),name:exerciseName.trim(),sets:validSets});
         }
-        updated[activeDay] = list;
-        setWorkouts(updated); await saveWorkouts(updated); closeModal();
+        updated[activeDay]=list;
+        setWorkouts(updated);
+        await saveWorkout(activeDay,list);
+        closeModal();
       };
 
-      const confirmDelete = async function(id) {
-        const updated = { ...workouts };
-        updated[activeDay] = (updated[activeDay] || []).filter(function(e) { return e.id !== id; });
-        setWorkouts(updated); await saveWorkouts(updated); setDeleteConfirm(null);
+      const confirmDelete = async (id) => {
+        const updated={...workouts};
+        updated[activeDay]=(updated[activeDay]||[]).filter(e=>e.id!==id);
+        setWorkouts(updated);
+        await saveWorkout(activeDay,updated[activeDay]);
+        setDeleteConfirm(null);
       };
 
-      if (loading) {
-        return (
-          <div style={{ minHeight: "100vh", background: C.bg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
-            <div style={{ fontSize: 48 }}>🏋️</div>
-            <div style={{ fontFamily: "Impact, sans-serif", fontSize: 28, color: C.accent, letterSpacing: 4 }}>CARREGANDO...</div>
-          </div>
-        );
-      }
+      if (loading) return (
+        <div style={{minHeight:"100vh",background:C.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12}}>
+          <div style={{fontSize:48}}>🏋️</div>
+          <div style={{fontFamily:"Impact,sans-serif",fontSize:28,color:C.accent,letterSpacing:4}}>CARREGANDO...</div>
+        </div>
+      );
 
       // ── VIEW HISTÓRICO ──
-      if (view === "historico") {
-        const grouped = {};
-        history.forEach(function(h) { if (!grouped[h.date]) grouped[h.date] = []; grouped[h.date].push(h); });
-        const dates = Object.keys(grouped).sort(function(a, b) { return b.localeCompare(a); });
+      if (view==="historico") {
+        const grouped={};
+        history.forEach(h=>{ if(!grouped[h.date]) grouped[h.date]=[]; grouped[h.date].push(h); });
+        const dates=Object.keys(grouped).sort((a,b)=>b.localeCompare(a));
+        const weekKeys=Object.keys(weekPhotos).sort((a,b)=>b.localeCompare(a));
+        if(!weekKeys.includes(currentWeekKey)) weekKeys.unshift(currentWeekKey);
 
-        // Slot de foto
-        const PhotoSlot = function({ slot, label, weekKey }) {
-          const photos = weekPhotos[weekKey] || {};
+        const PhotoSlot = ({slot,label,weekKey}) => {
+          const photos = weekPhotos[weekKey]||{};
           const photo  = photos[slot];
-          const inputRef = useRef(null);
-          const isCurrentWeek = weekKey === currentWeekKey;
+          const inputRef=useRef(null);
+          const isCurrent=weekKey===currentWeekKey;
           return (
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
-              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.muted, textTransform: "uppercase", textAlign: "center" }}>{label}</div>
-              {photo ? (
-                <div style={{ position: "relative" }}>
-                  <img src={"data:image/jpeg;base64," + photo} style={{ width: "100%", aspectRatio: "3/4", objectFit: "cover", borderRadius: 8, border: `1px solid ${C.border}`, display: "block" }} />
-                  {isCurrentWeek && (
-                    <button onClick={function() { removePhoto(slot); }} style={{ position: "absolute", top: 4, right: 4, width: 22, height: 22, borderRadius: "50%", background: "rgba(0,0,0,0.7)", border: `1px solid ${C.red}66`, color: C.red, fontSize: 11, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
-                  )}
+            <div style={{flex:1,display:"flex",flexDirection:"column",gap:4}}>
+              <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.muted,textTransform:"uppercase",textAlign:"center"}}>{label}</div>
+              {photo?(
+                <div style={{position:"relative"}}>
+                  <img src={"data:image/jpeg;base64,"+photo} style={{width:"100%",aspectRatio:"3/4",objectFit:"cover",borderRadius:8,border:`1px solid ${C.border}`,display:"block"}} />
+                  {isCurrent&&<button onClick={()=>removePhoto(slot)} style={{position:"absolute",top:4,right:4,width:22,height:22,borderRadius:"50%",background:"rgba(0,0,0,0.7)",border:`1px solid ${C.red}66`,color:C.red,fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>}
                 </div>
-              ) : (
-                isCurrentWeek ? (
-                  <div onClick={function() { inputRef.current && inputRef.current.click(); }} style={{ width: "100%", aspectRatio: "3/4", borderRadius: 8, border: `2px dashed ${C.border}`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, cursor: "pointer", background: "#111" }}>
-                    <span style={{ fontSize: 22 }}>📷</span>
-                    <span style={{ fontSize: 9, color: C.muted, fontWeight: 700, letterSpacing: 1 }}>ADICIONAR</span>
-                    <input ref={inputRef} type="file" accept="image/*" capture="user" style={{ display: "none" }} onChange={function(e) { if (e.target.files[0]) handlePhotoUpload(slot, e.target.files[0]); }} />
+              ):(
+                isCurrent?(
+                  <div onClick={()=>inputRef.current&&inputRef.current.click()} style={{width:"100%",aspectRatio:"3/4",borderRadius:8,border:`2px dashed ${C.border}`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,cursor:"pointer",background:"#111"}}>
+                    <span style={{fontSize:22}}>📷</span>
+                    <span style={{fontSize:9,color:C.muted,fontWeight:700,letterSpacing:1}}>ADICIONAR</span>
+                    <input ref={inputRef} type="file" accept="image/*" capture="user" style={{display:"none"}} onChange={e=>{if(e.target.files[0])handlePhotoUpload(slot,e.target.files[0]);}} />
                   </div>
-                ) : (
-                  <div style={{ width: "100%", aspectRatio: "3/4", borderRadius: 8, border: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "center", background: "#0d0d0d" }}>
-                    <span style={{ fontSize: 18, opacity: 0.3 }}>—</span>
+                ):(
+                  <div style={{width:"100%",aspectRatio:"3/4",borderRadius:8,border:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"center",background:"#0d0d0d"}}>
+                    <span style={{fontSize:18,opacity:0.3}}>—</span>
                   </div>
                 )
               )}
@@ -531,108 +773,89 @@
           );
         };
 
-        // Agrupa por semana para fotos
-        const weekKeys = Object.keys(weekPhotos).sort(function(a, b) { return b.localeCompare(a); });
-        // Garante semana atual aparece mesmo sem foto
-        if (!weekKeys.includes(currentWeekKey)) weekKeys.unshift(currentWeekKey);
-
         return (
           <div>
-            <style>{`@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@400;500;600;700&display=swap'); * { box-sizing: border-box; } body { margin: 0; background: #0c0c0c; overflow-y: auto; }`}</style>
-            <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "'Barlow', sans-serif", maxWidth: 480, margin: "0 auto" }}>
-
-              {/* HEADER HISTÓRICO */}
-              <div style={{ padding: "22px 20px 16px", background: C.surface, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, zIndex: 10 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <div style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 40, letterSpacing: 4, color: C.accent, lineHeight: 1 }}>HISTÓRICO</div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button onClick={function() { setAiReport(""); setAiError(""); setChatMessages([]); setModal("ai"); }} style={{ background: C.purpleDim, border: `1px solid ${C.purple}44`, color: C.purple, borderRadius: 8, padding: "8px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow', sans-serif", letterSpacing: 1 }}>🤖 IA</button>
-                    <button onClick={function() { setView("treino"); }} style={{ background: C.accentDim, border: `1px solid ${C.accent}44`, color: C.accentText, borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow', sans-serif", letterSpacing: 1 }}>← TREINO</button>
+            <style>{`@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@400;500;600;700;800&display=swap'); *{box-sizing:border-box;} body{margin:0;background:#0c0c0c;overflow-y:auto;}`}</style>
+            <div style={{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:"'Barlow',sans-serif",maxWidth:480,margin:"0 auto"}}>
+              <div style={{padding:"22px 20px 16px",background:C.surface,borderBottom:`1px solid ${C.border}`,position:"sticky",top:0,zIndex:10}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <div style={{fontFamily:"'Bebas Neue',Impact,sans-serif",fontSize:40,letterSpacing:4,color:C.accent,lineHeight:1}}>HISTÓRICO</div>
+                  <div style={{display:"flex",gap:8}}>
+                    <button onClick={()=>{setAiReport("");setAiError("");setChatMessages([]);setModal("ai");}} style={{background:C.purpleDim,border:`1px solid ${C.purple}44`,color:C.purple,borderRadius:8,padding:"8px 12px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Barlow',sans-serif",letterSpacing:1}}>🤖 IA</button>
+                    <button onClick={()=>setView("treino")} style={{background:C.accentDim,border:`1px solid ${C.accent}44`,color:C.accentText,borderRadius:8,padding:"8px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Barlow',sans-serif",letterSpacing:1}}>← TREINO</button>
                   </div>
                 </div>
               </div>
 
-              <div style={{ padding: "16px", paddingBottom: 40 }}>
-
-                {/* FOTOS SEMANAIS */}
-                <div style={{ marginBottom: 28 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: C.accentText, textTransform: "uppercase", marginBottom: 12 }}>📸 FOTOS DO FÍSICO</div>
-                  {weekKeys.slice(0, 4).map(function(wk) {
-                    const isCurrentWeek = wk === currentWeekKey;
-                    return (
-                      <div key={wk} style={{ marginBottom: 16 }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, color: isCurrentWeek ? C.accent : C.muted2, textTransform: "uppercase", marginBottom: 8 }}>
-                          {isCurrentWeek ? "✦ SEMANA ATUAL" : wk}
-                        </div>
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <PhotoSlot slot="front" label="Frente" weekKey={wk} />
-                          <PhotoSlot slot="side"  label="Perfil" weekKey={wk} />
-                          <PhotoSlot slot="back"  label="Costas" weekKey={wk} />
-                        </div>
+              <div style={{padding:"16px",paddingBottom:40}}>
+                {/* FOTOS */}
+                <div style={{marginBottom:28}}>
+                  <div style={{fontSize:11,fontWeight:700,letterSpacing:2,color:C.accentText,textTransform:"uppercase",marginBottom:12}}>📸 FOTOS DO FÍSICO</div>
+                  {weekKeys.slice(0,4).map(wk=>(
+                    <div key={wk} style={{marginBottom:16}}>
+                      <div style={{fontSize:10,fontWeight:700,letterSpacing:1,color:wk===currentWeekKey?C.accent:C.muted2,textTransform:"uppercase",marginBottom:8}}>
+                        {wk===currentWeekKey?"✦ SEMANA ATUAL":wk}
                       </div>
-                    );
-                  })}
+                      <div style={{display:"flex",gap:8}}>
+                        <PhotoSlot slot="front" label="Frente" weekKey={wk} />
+                        <PhotoSlot slot="side"  label="Perfil" weekKey={wk} />
+                        <PhotoSlot slot="back"  label="Costas" weekKey={wk} />
+                      </div>
+                    </div>
+                  ))}
                 </div>
 
-                {/* DIVISOR */}
-                <div style={{ height: 1, background: C.border, marginBottom: 24 }} />
+                <div style={{height:1,background:C.border,marginBottom:24}} />
 
                 {/* TREINOS */}
-                {dates.length === 0 && (
-                  <div style={{ textAlign: "center", padding: "60px 20px", color: C.muted }}>
-                    <div style={{ fontSize: 48, marginBottom: 14 }}>📋</div>
-                    <div style={{ fontWeight: 700, fontSize: 16, color: C.muted2, marginBottom: 6 }}>Nenhum treino registrado ainda</div>
-                    <div style={{ fontSize: 13 }}>Finalize um treino para aparecer aqui.</div>
+                {dates.length===0&&(
+                  <div style={{textAlign:"center",padding:"60px 20px",color:C.muted}}>
+                    <div style={{fontSize:48,marginBottom:14}}>📋</div>
+                    <div style={{fontWeight:700,fontSize:16,color:C.muted2,marginBottom:6}}>Nenhum treino registrado ainda</div>
+                    <div style={{fontSize:13}}>Finalize um treino para aparecer aqui.</div>
                   </div>
                 )}
-                {dates.map(function(date) {
-                  const dayFeelings = feelings[date] || {};
-                  const energyOpt = ENERGY_OPTIONS.find(function(e) { return e.value === dayFeelings.energy; });
-                  const resultOpt = RESULT_OPTIONS.find(function(r) { return r.value === dayFeelings.result; });
+                {dates.map(date=>{
+                  const df=feelings[date]||{};
+                  const eO=ENERGY_OPTIONS.find(e=>e.value===df.energy);
+                  const rO=RESULT_OPTIONS.find(r=>r.value===df.result);
                   return (
-                    <div key={date} style={{ marginBottom: 24 }}>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, paddingLeft: 2 }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: C.accentText, textTransform: "uppercase" }}>📅 {formatDate(date)}</div>
-                        {(energyOpt || resultOpt) && (
-                          <div style={{ display: "flex", gap: 6, fontSize: 13 }}>
-                            {energyOpt && <span title={energyOpt.label}>{energyOpt.emoji}</span>}
-                            {resultOpt && <span title={resultOpt.label}>{resultOpt.emoji}</span>}
-                          </div>
-                        )}
+                    <div key={date} style={{marginBottom:24}}>
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,paddingLeft:2}}>
+                        <div style={{fontSize:11,fontWeight:700,letterSpacing:2,color:C.accentText,textTransform:"uppercase"}}>📅 {formatDate(date)}</div>
+                        {(eO||rO)&&<div style={{display:"flex",gap:6,fontSize:13}}>{eO&&<span title={eO.label}>{eO.emoji}</span>}{rO&&<span title={rO.label}>{rO.emoji}</span>}</div>}
                       </div>
-                      {grouped[date].map(function(entry, ei) {
-                        const dayLabel = DAYS.find(function(d) { return d.key === entry.day; });
+                      {grouped[date].map((entry,ei)=>{
+                        const dayLabel=DAYS.find(d=>d.key===entry.day);
                         return (
-                          <div key={ei} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, marginBottom: 10, overflow: "hidden" }}>
-                            <div style={{ padding: "10px 14px", background: C.surface2, borderBottom: `1px solid ${C.border}` }}>
-                              <span style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 15, letterSpacing: 2, color: C.accent }}>{dayLabel ? dayLabel.full : entry.day}</span>
-                              <span style={{ fontSize: 11, color: C.muted, marginLeft: 8 }}>{entry.exercises.length} exercício{entry.exercises.length !== 1 ? "s" : ""}</span>
+                          <div key={ei} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,marginBottom:10,overflow:"hidden"}}>
+                            <div style={{padding:"10px 14px",background:C.surface2,borderBottom:`1px solid ${C.border}`}}>
+                              <span style={{fontFamily:"'Bebas Neue',Impact,sans-serif",fontSize:15,letterSpacing:2,color:C.accent}}>{dayLabel?dayLabel.full:entry.day}</span>
+                              <span style={{fontSize:11,color:C.muted,marginLeft:8}}>{entry.exercises.length} exercício{entry.exercises.length!==1?"s":""}</span>
                             </div>
-                            {entry.exercises.map(function(ex, xi) {
-                              const olderH = history.filter(function(h) { return h.date < entry.date; });
-                              const prog = getProgression(ex.name, ex.sets, olderH);
+                            {entry.exercises.map((ex,xi)=>{
+                              const olderH=history.filter(h=>h.date<entry.date);
+                              const prog=getProgression(ex.name,ex.sets,olderH);
                               return (
-                                <div key={xi} style={{ padding: "10px 14px", borderBottom: xi < entry.exercises.length - 1 ? `1px solid ${C.border}` : "none" }}>
-                                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                                    <div style={{ fontWeight: 700, fontSize: 14 }}>{ex.name}</div>
-                                    {prog && prog.type === "up"          && <span style={{ fontSize: 11, color: C.accent, fontWeight: 700 }}>↑ +{prog.diff}kg</span>}
-                                    {prog && prog.type === "down"        && <span style={{ fontSize: 11, color: C.red,    fontWeight: 700 }}>↓ -{prog.diff}kg</span>}
-                                    {prog && prog.type === "volume_up"   && <span style={{ fontSize: 11, color: C.accent }}>↑ +vol</span>}
-                                    {prog && prog.type === "volume_down" && <span style={{ fontSize: 11, color: C.red    }}>↓ -vol</span>}
-                                    {prog && prog.type === "equal"       && <span style={{ fontSize: 11, color: C.muted2 }}>= igual</span>}
+                                <div key={xi} style={{padding:"10px 14px",borderBottom:xi<entry.exercises.length-1?`1px solid ${C.border}`:"none"}}>
+                                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                                    <div style={{fontWeight:700,fontSize:14}}>{ex.name}</div>
+                                    {prog&&prog.type==="up"          &&<span style={{fontSize:11,color:C.accent,fontWeight:700}}>↑ +{prog.diff}kg</span>}
+                                    {prog&&prog.type==="down"        &&<span style={{fontSize:11,color:C.red,  fontWeight:700}}>↓ -{prog.diff}kg</span>}
+                                    {prog&&prog.type==="volume_up"   &&<span style={{fontSize:11,color:C.accent}}>↑ +vol</span>}
+                                    {prog&&prog.type==="volume_down" &&<span style={{fontSize:11,color:C.red}}>↓ -vol</span>}
+                                    {prog&&prog.type==="equal"       &&<span style={{fontSize:11,color:C.muted2}}>= igual</span>}
                                   </div>
-                                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                                    {ex.sets.map(function(s, si) {
-                                      return (
-                                        <div key={si} style={{ background: "#111", border: `1px solid ${C.border}`, borderRadius: 6, padding: "4px 10px", fontSize: 12 }}>
-                                          <span style={{ color: C.muted2 }}>S{si+1} </span>
-                                          <span style={{ fontWeight: 700 }}>{s.reps}rep</span>
-                                          <span style={{ color: C.muted }}> · </span>
-                                          <span style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 15, color: C.accent }}>{s.weight}</span>
-                                          <span style={{ color: C.muted, fontSize: 10 }}>kg</span>
-                                        </div>
-                                      );
-                                    })}
+                                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                                    {ex.sets.map((s,si)=>(
+                                      <div key={si} style={{background:"#111",border:`1px solid ${C.border}`,borderRadius:6,padding:"4px 10px",fontSize:12}}>
+                                        <span style={{color:C.muted2}}>S{si+1} </span>
+                                        <span style={{fontWeight:700}}>{s.reps}rep</span>
+                                        <span style={{color:C.muted}}> · </span>
+                                        <span style={{fontFamily:"'Bebas Neue',Impact,sans-serif",fontSize:15,color:C.accent}}>{s.weight}</span>
+                                        <span style={{color:C.muted,fontSize:10}}>kg</span>
+                                      </div>
+                                    ))}
                                   </div>
                                 </div>
                               );
@@ -646,105 +869,60 @@
               </div>
             </div>
 
-            {/* MODAL IA + CHAT */}
-            {modal === "ai" && (
-              <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.95)", zIndex: 200, display: "flex", flexDirection: "column" }}>
-                <div style={{ background: C.surface, borderBottom: `1px solid ${C.purple}44`, padding: "18px 20px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
-                  <div style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 26, letterSpacing: 3, color: C.purple }}>🤖 ANÁLISE DA SEMANA</div>
-                  <button onClick={closeModal} style={{ background: "transparent", border: "none", color: C.muted, fontSize: 22, cursor: "pointer" }}>✕</button>
+            {/* MODAL IA */}
+            {modal==="ai"&&(
+              <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.95)",zIndex:200,display:"flex",flexDirection:"column"}}>
+                <div style={{background:C.surface,borderBottom:`1px solid ${C.purple}44`,padding:"18px 20px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+                  <div style={{fontFamily:"'Bebas Neue',Impact,sans-serif",fontSize:26,letterSpacing:3,color:C.purple}}>🤖 ANÁLISE DA SEMANA</div>
+                  <button onClick={closeModal} style={{background:"transparent",border:"none",color:C.muted,fontSize:22,cursor:"pointer"}}>✕</button>
                 </div>
-
-                {/* ÁREA DE MENSAGENS */}
-                <div style={{ flex: 1, overflowY: "auto", padding: "16px" }}>
-                  {!aiReport && !aiLoading && !aiError && (
-                    <div style={{ textAlign: "center", padding: "40px 20px" }}>
-                      <div style={{ fontSize: 52, marginBottom: 12 }}>🧠</div>
-                      <div style={{ fontSize: 14, color: C.muted2, lineHeight: 1.7, marginBottom: 8 }}>
-                        A IA vai analisar seus treinos, progressão de cargas e disposição da semana.
-                      </div>
-                      {(currentPhotos.front || currentPhotos.side || currentPhotos.back) ? (
-                        <div style={{ background: C.accentDim, border: `1px solid ${C.accent}33`, borderRadius: 10, padding: "10px 14px", marginBottom: 24, fontSize: 13, color: C.accentText }}>
-                          📸 {[currentPhotos.front ? "Frente" : null, currentPhotos.side ? "Perfil" : null, currentPhotos.back ? "Costas" : null].filter(Boolean).join(", ")} incluídas na análise
+                <div style={{flex:1,overflowY:"auto",padding:"16px"}}>
+                  {!aiReport&&!aiLoading&&!aiError&&(
+                    <div style={{textAlign:"center",padding:"40px 20px"}}>
+                      <div style={{fontSize:52,marginBottom:12}}>🧠</div>
+                      <div style={{fontSize:14,color:C.muted2,lineHeight:1.7,marginBottom:8}}>A IA vai analisar seus treinos, progressão de cargas e disposição da semana.</div>
+                      {(currentPhotos.front||currentPhotos.side||currentPhotos.back)?(
+                        <div style={{background:C.accentDim,border:`1px solid ${C.accent}33`,borderRadius:10,padding:"10px 14px",marginBottom:24,fontSize:13,color:C.accentText}}>
+                          📸 {[currentPhotos.front?"Frente":null,currentPhotos.side?"Perfil":null,currentPhotos.back?"Costas":null].filter(Boolean).join(", ")} incluídas na análise
                         </div>
-                      ) : (
-                        <div style={{ background: "#1a1a1a", border: `1px solid ${C.border}`, borderRadius: 10, padding: "10px 14px", marginBottom: 24, fontSize: 12, color: C.muted }}>
-                          Sem fotos esta semana — adicione no histórico para análise visual
-                        </div>
+                      ):(
+                        <div style={{background:"#1a1a1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 14px",marginBottom:24,fontSize:12,color:C.muted}}>Sem fotos esta semana — adicione no histórico para análise visual</div>
                       )}
-                      <button onClick={generateAIReport} style={{ width: "100%", background: C.purple, color: "#fff", border: "none", borderRadius: 13, padding: "16px", fontSize: 15, fontWeight: 800, letterSpacing: 1.5, cursor: "pointer", fontFamily: "'Barlow', sans-serif" }}>GERAR ANÁLISE</button>
+                      <button onClick={generateAIReport} style={{width:"100%",background:C.purple,color:"#fff",border:"none",borderRadius:13,padding:"16px",fontSize:15,fontWeight:800,letterSpacing:1.5,cursor:"pointer",fontFamily:"'Barlow',sans-serif"}}>GERAR ANÁLISE</button>
                     </div>
                   )}
-                  {aiLoading && (
-                    <div style={{ textAlign: "center", padding: "60px 20px" }}>
-                      <div style={{ fontSize: 40, marginBottom: 16 }}>⏳</div>
-                      <div style={{ color: C.purple, fontWeight: 700, letterSpacing: 1 }}>ANALISANDO SEUS DADOS{(currentPhotos.front || currentPhotos.side || currentPhotos.back) ? " E FOTOS" : ""}...</div>
+                  {aiLoading&&<div style={{textAlign:"center",padding:"60px 20px"}}><div style={{fontSize:40,marginBottom:16}}>⏳</div><div style={{color:C.purple,fontWeight:700,letterSpacing:1}}>ANALISANDO SEUS DADOS...</div></div>}
+                  {aiError&&(
+                    <div style={{padding:"16px 0"}}>
+                      <div style={{background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:12,padding:"14px 16px",marginBottom:16,fontSize:13,color:C.red,lineHeight:1.6}}>{aiError}</div>
+                      <button onClick={generateAIReport} style={{width:"100%",background:C.purple,color:"#fff",border:"none",borderRadius:13,padding:"14px",fontSize:14,fontWeight:800,cursor:"pointer",fontFamily:"'Barlow',sans-serif"}}>TENTAR NOVAMENTE</button>
                     </div>
                   )}
-                  {aiError && (
-                    <div style={{ padding: "16px 0" }}>
-                      <div style={{ background: C.redDim, border: `1px solid ${C.red}44`, borderRadius: 12, padding: "14px 16px", marginBottom: 16, fontSize: 13, color: C.red, lineHeight: 1.6 }}>{aiError}</div>
-                      <button onClick={generateAIReport} style={{ width: "100%", background: C.purple, color: "#fff", border: "none", borderRadius: 13, padding: "14px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "'Barlow', sans-serif" }}>TENTAR NOVAMENTE</button>
-                    </div>
-                  )}
-
-                  {/* MENSAGENS DO CHAT */}
-                  {chatMessages.map(function(msg, i) {
-                    const isAI = msg.role === "assistant";
+                  {chatMessages.map((msg,i)=>{
+                    const isAI=msg.role==="assistant";
                     return (
-                      <div key={i} style={{ marginBottom: 16, display: "flex", flexDirection: "column", alignItems: isAI ? "flex-start" : "flex-end" }}>
-                        {isAI && i === 0 && (
-                          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.purple, marginBottom: 6, textTransform: "uppercase" }}>🤖 Análise do PT</div>
-                        )}
-                        {!isAI && (
-                          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.muted2, marginBottom: 6, textTransform: "uppercase" }}>Você</div>
-                        )}
-                        <div style={{
-                          background: isAI ? "#111" : C.accentDim,
-                          border: `1px solid ${isAI ? C.purple + "33" : C.accent + "44"}`,
-                          borderRadius: isAI ? "4px 14px 14px 14px" : "14px 4px 14px 14px",
-                          padding: "12px 14px",
-                          fontSize: 14,
-                          color: isAI ? C.text : C.accentText,
-                          lineHeight: 1.75,
-                          whiteSpace: "pre-wrap",
-                          maxWidth: "90%"
-                        }}>{msg.content}</div>
+                      <div key={i} style={{marginBottom:16,display:"flex",flexDirection:"column",alignItems:isAI?"flex-start":"flex-end"}}>
+                        {isAI&&i===0&&<div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.purple,marginBottom:6,textTransform:"uppercase"}}>🤖 Análise do PT</div>}
+                        {!isAI&&<div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.muted2,marginBottom:6,textTransform:"uppercase"}}>Você</div>}
+                        <div style={{background:isAI?"#111":C.accentDim,border:`1px solid ${isAI?C.purple+"33":C.accent+"44"}`,borderRadius:isAI?"4px 14px 14px 14px":"14px 4px 14px 14px",padding:"12px 14px",fontSize:14,color:isAI?C.text:C.accentText,lineHeight:1.75,whiteSpace:"pre-wrap",maxWidth:"90%"}}>{msg.content}</div>
                       </div>
                     );
                   })}
-
-                  {chatLoading && (
-                    <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 16 }}>
-                      <div style={{ background: "#111", border: `1px solid ${C.purple}33`, borderRadius: "4px 14px 14px 14px", padding: "12px 16px", fontSize: 14, color: C.muted }}>
-                        <span style={{ animation: "pulse 1s infinite" }}>● ● ●</span>
-                      </div>
-                    </div>
-                  )}
+                  {chatLoading&&<div style={{display:"flex",alignItems:"flex-start",gap:8,marginBottom:16}}><div style={{background:"#111",border:`1px solid ${C.purple}33`,borderRadius:"4px 14px 14px 14px",padding:"12px 16px",fontSize:14,color:C.muted}}>● ● ●</div></div>}
                   <div ref={chatEndRef} />
                 </div>
-
-                {/* INPUT DO CHAT — só aparece após análise */}
-                {aiReport && (
-                  <div style={{ padding: "12px 16px 24px", background: C.surface, borderTop: `1px solid ${C.border}`, flexShrink: 0 }}>
-                    <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-                      <div style={{ flex: 1, background: "#111", border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 14px", display: "flex", alignItems: "center" }}>
-                        <textarea
-                          value={chatInput}
-                          onChange={function(e) { setChatInput(e.target.value); }}
-                          onKeyDown={function(e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChatMessage(); } }}
-                          placeholder="Pergunte algo sobre sua análise..."
-                          rows={1}
-                          style={{ width: "100%", background: "transparent", border: "none", color: C.text, fontSize: 14, outline: "none", resize: "none", fontFamily: "'Barlow', sans-serif", lineHeight: 1.4 }}
-                        />
+                {aiReport&&(
+                  <div style={{padding:"12px 16px 24px",background:C.surface,borderTop:`1px solid ${C.border}`,flexShrink:0}}>
+                    <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
+                      <div style={{flex:1,background:"#111",border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 14px"}}>
+                        <textarea value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendChatMessage();}}} placeholder="Pergunte algo sobre sua análise..." rows={1} style={{width:"100%",background:"transparent",border:"none",color:C.text,fontSize:14,outline:"none",resize:"none",fontFamily:"'Barlow',sans-serif",lineHeight:1.4}} />
                       </div>
-                      <button onClick={sendChatMessage} disabled={!chatInput.trim() || chatLoading} style={{ width: 44, height: 44, borderRadius: 12, background: chatInput.trim() && !chatLoading ? C.accent : "#2a2a2a", border: "none", color: chatInput.trim() && !chatLoading ? "#000" : C.muted, fontSize: 18, cursor: chatInput.trim() && !chatLoading ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>↑</button>
+                      <button onClick={sendChatMessage} disabled={!chatInput.trim()||chatLoading} style={{width:44,height:44,borderRadius:12,background:chatInput.trim()&&!chatLoading?C.accent:"#2a2a2a",border:"none",color:chatInput.trim()&&!chatLoading?"#000":C.muted,fontSize:18,cursor:chatInput.trim()&&!chatLoading?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>↑</button>
                     </div>
-                    <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      {["Qual músculo focar?", "Como melhorar definição?", "Meu treino está bom?"].map(function(q) {
-                        return (
-                          <button key={q} onClick={function() { setChatInput(q); }} style={{ background: C.purpleDim, border: `1px solid ${C.purple}33`, color: C.purple, borderRadius: 20, padding: "5px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "'Barlow', sans-serif" }}>{q}</button>
-                        );
-                      })}
+                    <div style={{marginTop:8,display:"flex",gap:6,flexWrap:"wrap"}}>
+                      {["Qual músculo focar?","Como melhorar definição?","Meu treino está bom?"].map(q=>(
+                        <button key={q} onClick={()=>setChatInput(q)} style={{background:C.purpleDim,border:`1px solid ${C.purple}33`,color:C.purple,borderRadius:20,padding:"5px 10px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"'Barlow',sans-serif"}}>{q}</button>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -755,116 +933,166 @@
       }
 
       // ── VIEW TREINO ──
+      const weekHasHistory = history.some(h=>getWeekKey(h.date)===currentWeekKey);
+
       return (
         <div>
           <style>{`
-            @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@400;500;600;700&display=swap');
-            * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-            body { margin: 0; background: #0c0c0c; overflow-y: auto; }
-            ::-webkit-scrollbar { width: 4px; }
-            ::-webkit-scrollbar-track { background: #161616; }
-            ::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
-            input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; }
-            input::placeholder, textarea::placeholder { color: #3a3a3a; }
-            @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:0.3 } }
+            @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@400;500;600;700;800&display=swap');
+            *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+            body{margin:0;background:#0c0c0c;overflow-y:auto;}
+            ::-webkit-scrollbar{width:4px;}
+            ::-webkit-scrollbar-track{background:#161616;}
+            ::-webkit-scrollbar-thumb{background:#333;border-radius:2px;}
+            input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;}
+            input::placeholder,textarea::placeholder{color:#3a3a3a;}
+            @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
           `}</style>
-          <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "'Barlow', sans-serif", maxWidth: 480, margin: "0 auto", position: "relative" }}>
+          <div style={{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:"'Barlow',sans-serif",maxWidth:480,margin:"0 auto",position:"relative"}}>
 
             {/* HEADER */}
-            <div style={{ padding: "18px 20px 14px", background: C.surface, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, zIndex: 10 }}>
-              <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
+            <div style={{padding:"18px 20px 14px",background:C.surface,borderBottom:`1px solid ${C.border}`,position:"sticky",top:0,zIndex:10}}>
+              <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between"}}>
                 <div>
-                  <div style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 40, letterSpacing: 4, color: C.accent, lineHeight: 1 }}>GYM LOG</div>
-                  <div style={{ fontSize: 11, color: C.muted, letterSpacing: 2, textTransform: "uppercase", marginTop: 2 }}>Diário de Treinos</div>
+                  <div style={{fontFamily:"'Bebas Neue',Impact,sans-serif",fontSize:40,letterSpacing:4,color:C.accent,lineHeight:1}}>IRON LOG</div>
+                  <div style={{fontSize:11,color:C.muted,letterSpacing:2,textTransform:"uppercase",marginTop:2}}>Forge your progress</div>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  {saving && <div style={{ fontSize: 11, color: C.accentText, fontWeight: 700 }}>✓ SALVO</div>}
-                  <button onClick={function() { setView("historico"); }} style={{ background: C.blueDim, border: `1px solid ${C.blue}44`, color: C.blue, borderRadius: 8, padding: "8px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow', sans-serif", letterSpacing: 1 }}>📋 HISTÓRICO</button>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  {saving&&<div style={{fontSize:11,color:C.accentText,fontWeight:700}}>✓ SALVO</div>}
+
+                  {/* BOTÃO DE MIGRAÇÃO — some após uso */}
+                  {showMigrate && (
+                    <button
+                      onClick={runMigration}
+                      disabled={migrating}
+                      style={{
+                        background: migrating ? "#2a2a2a" : "#fb923c18",
+                        border: `1px solid #fb923c66`,
+                        color: migrating ? C.muted : "#fb923c",
+                        borderRadius: 8,
+                        padding: "8px 12px",
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: migrating ? "default" : "pointer",
+                        fontFamily: "'Barlow',sans-serif",
+                        letterSpacing: 1,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {migrating ? "MIGRANDO..." : "⬆ MIGRAR DADOS"}
+                    </button>
+                  )}
+                  
+                  <button onClick={()=>setView("historico")} style={{background:C.blueDim,border:`1px solid ${C.blue}44`,color:C.blue,borderRadius:8,padding:"8px 12px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Barlow',sans-serif",letterSpacing:1}}>📋 HISTÓRICO</button>
+                  {/* Avatar / menu */}
+                  <div style={{position:"relative"}}>
+                    <button onClick={()=>setMenuOpen(o=>!o)} style={{width:34,height:34,borderRadius:"50%",background:C.accentDim,border:`1px solid ${C.accent}44`,color:C.accentText,fontSize:13,fontWeight:800,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Barlow',sans-serif"}}>
+                      {(profile?.display_name||user.email||"?")[0].toUpperCase()}
+                    </button>
+                    {menuOpen&&(
+                      <div style={{position:"absolute",top:42,right:0,background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"6px 0",minWidth:160,zIndex:200,boxShadow:"0 8px 32px rgba(0,0,0,0.6)"}}>
+                        <div style={{padding:"8px 16px 6px",fontSize:11,color:C.muted,letterSpacing:1,borderBottom:`1px solid ${C.border}`,marginBottom:4}}>{user.email}</div>
+                        <button onClick={async()=>{setMenuOpen(false);await sb.auth.signOut();onSignOut();}} style={{width:"100%",background:"transparent",border:"none",color:C.red,fontSize:13,fontWeight:700,padding:"10px 16px",cursor:"pointer",textAlign:"left",fontFamily:"'Barlow',sans-serif",letterSpacing:1}}>SAIR</button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
-              <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center" }}>
-                <button onClick={function() { setModal("energy"); }} style={{ flex: 1, background: todayEnergy ? C.accentDim : "#1a1a1a", border: `1px solid ${todayEnergy ? C.accent + "55" : C.border}`, borderRadius: 8, padding: "8px 10px", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ fontSize: 16 }}>{todayEnergy ? ENERGY_OPTIONS.find(function(e) { return e.value === todayEnergy; }).emoji : "😐"}</span>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: todayEnergy ? C.accentText : C.muted, letterSpacing: 1, textTransform: "uppercase" }}>{todayEnergy ? ENERGY_OPTIONS.find(function(e) { return e.value === todayEnergy; }).label : "Como você está?"}</span>
+
+              {/* Feelings bar */}
+              <div style={{display:"flex",gap:8,marginTop:12,alignItems:"center"}}>
+                <button onClick={()=>setModal("energy")} style={{flex:1,background:todayEnergy?C.accentDim:"#1a1a1a",border:`1px solid ${todayEnergy?C.accent+"55":C.border}`,borderRadius:8,padding:"8px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{fontSize:16}}>{todayEnergy?ENERGY_OPTIONS.find(e=>e.value===todayEnergy).emoji:"😐"}</span>
+                  <span style={{fontSize:10,fontWeight:700,color:todayEnergy?C.accentText:C.muted,letterSpacing:1,textTransform:"uppercase"}}>{todayEnergy?ENERGY_OPTIONS.find(e=>e.value===todayEnergy).label:"Como você está?"}</span>
                 </button>
-                {todayResult && (
-                  <div style={{ background: C.blueDim, border: `1px solid ${C.blue}44`, borderRadius: 8, padding: "8px 10px", display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ fontSize: 16 }}>{RESULT_OPTIONS.find(function(r) { return r.value === todayResult; }).emoji}</span>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: C.blue, letterSpacing: 1, textTransform: "uppercase" }}>{RESULT_OPTIONS.find(function(r) { return r.value === todayResult; }).label}</span>
+                {todayResult&&(
+                  <div style={{background:C.blueDim,border:`1px solid ${C.blue}44`,borderRadius:8,padding:"8px 10px",display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{fontSize:16}}>{RESULT_OPTIONS.find(r=>r.value===todayResult).emoji}</span>
+                    <span style={{fontSize:10,fontWeight:700,color:C.blue,letterSpacing:1,textTransform:"uppercase"}}>{RESULT_OPTIONS.find(r=>r.value===todayResult).label}</span>
                   </div>
                 )}
               </div>
             </div>
 
+            {/* IA PROMO CARD — aparece se há histórico na semana */}
+            {weekHasHistory&&(
+              <div onClick={()=>{setView("historico");setTimeout(()=>{setAiReport("");setAiError("");setChatMessages([]);setModal("ai");},100);}} style={{margin:"12px 16px 0",background:"linear-gradient(135deg,#1a0f2e,#1c1c1c)",border:`1px solid ${C.purple}44`,borderRadius:14,padding:"12px 16px",cursor:"pointer",display:"flex",alignItems:"center",gap:12}}>
+                <div style={{fontSize:28}}>🤖</div>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:12,fontWeight:800,color:C.purple,letterSpacing:1}}>ANÁLISE DA SEMANA DISPONÍVEL</div>
+                  <div style={{fontSize:11,color:C.muted2,marginTop:2}}>Toque para ver sua progressão com IA</div>
+                </div>
+                <div style={{color:C.purple,fontSize:18}}>›</div>
+              </div>
+            )}
+
             {/* DAY TABS */}
-            <div style={{ display: "flex", background: C.surface, borderBottom: `1px solid ${C.border}`, overflowX: "auto" }}>
-              {DAYS.map(function(day) {
-                const active  = activeDay === day.key;
-                const isToday = day.key === todayKey;
-                const count   = (workouts[day.key] || []).length;
+            <div style={{display:"flex",background:C.surface,borderBottom:`1px solid ${C.border}`,overflowX:"auto",marginTop:weekHasHistory?12:0}}>
+              {DAYS.map(day=>{
+                const active=activeDay===day.key;
+                const isToday=day.key===todayKey;
+                const count=(workouts[day.key]||[]).length;
                 return (
-                  <button key={day.key} onClick={function() { setActiveDay(day.key); }} style={{ flex: "0 0 auto", padding: "10px 14px 8px", border: "none", background: "transparent", color: active ? C.accent : C.muted2, fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 17, letterSpacing: 2, cursor: "pointer", borderBottom: active ? `3px solid ${C.accent}` : "3px solid transparent", transition: "all 0.15s", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, position: "relative" }}>
+                  <button key={day.key} onClick={()=>setActiveDay(day.key)} style={{flex:"0 0 auto",padding:"10px 14px 8px",border:"none",background:"transparent",color:active?C.accent:C.muted2,fontFamily:"'Bebas Neue',Impact,sans-serif",fontSize:17,letterSpacing:2,cursor:"pointer",borderBottom:active?`3px solid ${C.accent}`:"3px solid transparent",transition:"all 0.15s",display:"flex",flexDirection:"column",alignItems:"center",gap:2,position:"relative"}}>
                     {day.label}
-                    {isToday && <span style={{ position: "absolute", top: 6, right: 6, width: 5, height: 5, borderRadius: "50%", background: C.accent }} />}
-                    {count > 0 && <span style={{ fontSize: 9, fontFamily: "'Barlow', sans-serif", fontWeight: 700, color: active ? C.accent : C.muted }}>{count} EX</span>}
+                    {isToday&&<span style={{position:"absolute",top:6,right:6,width:5,height:5,borderRadius:"50%",background:C.accent}} />}
+                    {count>0&&<span style={{fontSize:9,fontFamily:"'Barlow',sans-serif",fontWeight:700,color:active?C.accent:C.muted}}>{count} EX</span>}
                   </button>
                 );
               })}
             </div>
 
             {/* CONTENT */}
-            <div style={{ padding: "20px 16px", paddingBottom: 170 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
+            <div style={{padding:"20px 16px",paddingBottom:170}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:18}}>
                 <div>
-                  <div style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 30, letterSpacing: 2, color: C.text, lineHeight: 1 }}>{currentDay.full}</div>
-                  {dayExercises.length > 0 && <div style={{ fontSize: 12, color: C.muted2, marginTop: 3 }}>{dayExercises.length} exercício{dayExercises.length !== 1 ? "s" : ""} · {totalSetsForDay(activeDay)} séries</div>}
+                  <div style={{fontFamily:"'Bebas Neue',Impact,sans-serif",fontSize:30,letterSpacing:2,color:C.text,lineHeight:1}}>{currentDay.full}</div>
+                  {dayExercises.length>0&&<div style={{fontSize:12,color:C.muted2,marginTop:3}}>{dayExercises.length} exercício{dayExercises.length!==1?"s":""} · {totalSetsForDay(activeDay)} séries</div>}
                 </div>
               </div>
-              {dayExercises.length === 0 && (
-                <div style={{ textAlign: "center", padding: "52px 20px", color: C.muted }}>
-                  <div style={{ fontSize: 52, marginBottom: 14 }}>🏋️</div>
-                  <div style={{ fontWeight: 700, fontSize: 16, color: C.muted2, marginBottom: 6 }}>Dia de descanso?</div>
-                  <div style={{ fontSize: 13, lineHeight: 1.6 }}>Adicione seus exercícios com as<br />séries, repetições e carga usada.</div>
+              {dayExercises.length===0&&(
+                <div style={{textAlign:"center",padding:"52px 20px",color:C.muted}}>
+                  <div style={{fontSize:52,marginBottom:14}}>🏋️</div>
+                  <div style={{fontWeight:700,fontSize:16,color:C.muted2,marginBottom:6}}>Dia de descanso?</div>
+                  <div style={{fontSize:13,lineHeight:1.6}}>Adicione seus exercícios com as<br/>séries, repetições e carga usada.</div>
                 </div>
               )}
-              {dayExercises.map(function(ex, exIdx) {
-                const prog = getProgression(ex.name, ex.sets, history);
+              {dayExercises.map((ex,exIdx)=>{
+                const prog=getProgression(ex.name,ex.sets,history);
                 return (
-                  <div key={ex.id} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, marginBottom: 12, overflow: "hidden" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", borderBottom: `1px solid ${C.border}`, background: C.surface2 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <div style={{ width: 26, height: 26, borderRadius: 6, background: C.accentDim, border: `1px solid ${C.accent}33`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Bebas Neue', sans-serif", fontSize: 13, color: C.accentText, flexShrink: 0 }}>{exIdx + 1}</div>
+                  <div key={ex.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,marginBottom:12,overflow:"hidden"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 14px",borderBottom:`1px solid ${C.border}`,background:C.surface2}}>
+                      <div style={{display:"flex",alignItems:"center",gap:10}}>
+                        <div style={{width:26,height:26,borderRadius:6,background:C.accentDim,border:`1px solid ${C.accent}33`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Bebas Neue',sans-serif",fontSize:13,color:C.accentText,flexShrink:0}}>{exIdx+1}</div>
                         <div>
-                          <div style={{ fontWeight: 700, fontSize: 15 }}>{ex.name}</div>
-                          {prog && (
-                            <div style={{ fontSize: 11, marginTop: 1 }}>
-                              {prog.type === "up"          && <span style={{ color: C.accent }}>↑ +{prog.diff}kg vs último treino 🏆</span>}
-                              {prog.type === "down"        && <span style={{ color: C.red   }}>↓ -{prog.diff}kg vs último treino</span>}
-                              {prog.type === "volume_up"   && <span style={{ color: C.accent }}>↑ mais volume vs último treino</span>}
-                              {prog.type === "volume_down" && <span style={{ color: C.red   }}>↓ menos volume vs último treino</span>}
-                              {prog.type === "equal"       && <span style={{ color: C.muted2 }}>= mesmo peso do último treino</span>}
+                          <div style={{fontWeight:700,fontSize:15}}>{ex.name}</div>
+                          {prog&&(
+                            <div style={{fontSize:11,marginTop:1}}>
+                              {prog.type==="up"          &&<span style={{color:C.accent}}>↑ +{prog.diff}kg vs último treino 🏆</span>}
+                              {prog.type==="down"        &&<span style={{color:C.red}}>↓ -{prog.diff}kg vs último treino</span>}
+                              {prog.type==="volume_up"   &&<span style={{color:C.accent}}>↑ mais volume vs último treino</span>}
+                              {prog.type==="volume_down" &&<span style={{color:C.red}}>↓ menos volume vs último treino</span>}
+                              {prog.type==="equal"       &&<span style={{color:C.muted2}}>= mesmo peso do último treino</span>}
                             </div>
                           )}
                         </div>
                       </div>
-                      <div style={{ display: "flex", gap: 6 }}>
-                        <button onClick={function() { openEdit(ex); }} style={{ border: `1px solid ${C.border}`, background: "transparent", color: C.muted2, borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>EDITAR</button>
-                        <button onClick={function() { setDeleteConfirm(ex.id); }} style={{ border: "none", background: C.redDim, color: C.red, borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>✕</button>
+                      <div style={{display:"flex",gap:6}}>
+                        <button onClick={()=>openEdit(ex)} style={{border:`1px solid ${C.border}`,background:"transparent",color:C.muted2,borderRadius:6,padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer"}}>EDITAR</button>
+                        <button onClick={()=>setDeleteConfirm(ex.id)} style={{border:"none",background:C.redDim,color:C.red,borderRadius:6,padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer"}}>✕</button>
                       </div>
                     </div>
                     <div>
-                      <div style={{ display: "grid", gridTemplateColumns: "36px 1fr 1fr", padding: "6px 14px", borderBottom: `1px solid ${C.border}` }}>
-                        {["#", "REPS", "CARGA"].map(function(h) { return <div key={h} style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.muted, textTransform: "uppercase" }}>{h}</div>; })}
+                      <div style={{display:"grid",gridTemplateColumns:"36px 1fr 1fr",padding:"6px 14px",borderBottom:`1px solid ${C.border}`}}>
+                        {["#","REPS","CARGA"].map(h=><div key={h} style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.muted,textTransform:"uppercase"}}>{h}</div>)}
                       </div>
-                      {ex.sets.map(function(set, si) {
-                        return (
-                          <div key={si} style={{ display: "grid", gridTemplateColumns: "36px 1fr 1fr", padding: "10px 14px", borderBottom: si < ex.sets.length - 1 ? `1px solid ${C.border}` : "none", background: si % 2 === 0 ? "transparent" : "#1a1a1a", alignItems: "center" }}>
-                            <div style={{ fontSize: 11, color: C.muted, fontFamily: "monospace" }}>S{si + 1}</div>
-                            <div style={{ fontSize: 15, fontWeight: 700 }}>{set.reps}<span style={{ fontSize: 11, color: C.muted, marginLeft: 2 }}>rep</span></div>
-                            <div><span style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 22, color: C.accent, letterSpacing: 1 }}>{set.weight}</span><span style={{ fontSize: 10, color: C.muted, marginLeft: 2 }}>kg</span></div>
-                          </div>
-                        );
-                      })}
+                      {ex.sets.map((set,si)=>(
+                        <div key={si} style={{display:"grid",gridTemplateColumns:"36px 1fr 1fr",padding:"10px 14px",borderBottom:si<ex.sets.length-1?`1px solid ${C.border}`:"none",background:si%2===0?"transparent":"#1a1a1a",alignItems:"center"}}>
+                          <div style={{fontSize:11,color:C.muted,fontFamily:"monospace"}}>S{si+1}</div>
+                          <div style={{fontSize:15,fontWeight:700}}>{set.reps}<span style={{fontSize:11,color:C.muted,marginLeft:2}}>rep</span></div>
+                          <div><span style={{fontFamily:"'Bebas Neue',Impact,sans-serif",fontSize:22,color:C.accent,letterSpacing:1}}>{set.weight}</span><span style={{fontSize:10,color:C.muted,marginLeft:2}}>kg</span></div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 );
@@ -872,131 +1100,128 @@
             </div>
 
             {/* BOTTOM BUTTONS */}
-            <div style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, padding: "12px 16px 22px", background: "linear-gradient(to top, #0c0c0c 70%, transparent)", pointerEvents: "none", display: "flex", flexDirection: "column", gap: 10 }}>
-              {dayExercises.length > 0 && (
-                <button onClick={finishWorkout} style={{ width: "100%", background: "transparent", color: C.accentText, border: `1px solid ${C.accent}55`, borderRadius: 14, padding: "13px", fontSize: 13, fontWeight: 700, letterSpacing: 1.5, cursor: "pointer", fontFamily: "'Barlow', sans-serif", pointerEvents: "all" }}>
+            <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,padding:"12px 16px 22px",background:"linear-gradient(to top, #0c0c0c 70%, transparent)",pointerEvents:"none",display:"flex",flexDirection:"column",gap:10}}>
+              {dayExercises.length>0&&(
+                <button onClick={finishWorkout} style={{width:"100%",background:"transparent",color:C.accentText,border:`1px solid ${C.accent}55`,borderRadius:14,padding:"13px",fontSize:13,fontWeight:700,letterSpacing:1.5,cursor:"pointer",fontFamily:"'Barlow',sans-serif",pointerEvents:"all"}}>
                   ✅ FINALIZAR E SALVAR NO HISTÓRICO
                 </button>
               )}
-              <button onClick={openAdd} style={{ width: "100%", background: C.accent, color: "#000", border: "none", borderRadius: 14, padding: "16px", fontSize: 15, fontWeight: 800, letterSpacing: 1.5, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontFamily: "'Barlow', sans-serif", boxShadow: `0 0 32px ${C.accent}33`, pointerEvents: "all" }}>
-                <span style={{ fontSize: 20, lineHeight: 1 }}>+</span> NOVO EXERCÍCIO
+              <button onClick={openAdd} style={{width:"100%",background:C.accent,color:"#000",border:"none",borderRadius:14,padding:"16px",fontSize:15,fontWeight:800,letterSpacing:1.5,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontFamily:"'Barlow',sans-serif",boxShadow:`0 0 32px ${C.accent}33`,pointerEvents:"all"}}>
+                <span style={{fontSize:20,lineHeight:1}}>+</span> NOVO EXERCÍCIO
               </button>
             </div>
 
+            {/* MENU OVERLAY */}
+            {menuOpen&&<div onClick={()=>setMenuOpen(false)} style={{position:"fixed",inset:0,zIndex:150}} />}
+
             {/* DELETE CONFIRM */}
-            {deleteConfirm && (
-              <div onClick={function() { setDeleteConfirm(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-                <div onClick={function(e) { e.stopPropagation(); }} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 18, padding: 24, width: "100%", maxWidth: 340, textAlign: "center" }}>
-                  <div style={{ fontSize: 36, marginBottom: 12 }}>🗑️</div>
-                  <div style={{ fontWeight: 700, fontSize: 17, marginBottom: 8 }}>Deletar exercício?</div>
-                  <div style={{ fontSize: 13, color: C.muted2, marginBottom: 24 }}>Essa ação não pode ser desfeita.</div>
-                  <div style={{ display: "flex", gap: 10 }}>
-                    <button onClick={function() { setDeleteConfirm(null); }} style={{ flex: 1, background: "transparent", border: `1px solid ${C.border}`, color: C.muted2, borderRadius: 10, padding: "12px", fontWeight: 600, cursor: "pointer", fontFamily: "'Barlow', sans-serif" }}>Cancelar</button>
-                    <button onClick={function() { confirmDelete(deleteConfirm); }} style={{ flex: 1, background: C.red, border: "none", color: "#fff", borderRadius: 10, padding: "12px", fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow', sans-serif" }}>Deletar</button>
+            {deleteConfirm&&(
+              <div onClick={()=>setDeleteConfirm(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+                <div onClick={e=>e.stopPropagation()} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:18,padding:24,width:"100%",maxWidth:340,textAlign:"center"}}>
+                  <div style={{fontSize:36,marginBottom:12}}>🗑️</div>
+                  <div style={{fontWeight:700,fontSize:17,marginBottom:8}}>Deletar exercício?</div>
+                  <div style={{fontSize:13,color:C.muted2,marginBottom:24}}>Essa ação não pode ser desfeita.</div>
+                  <div style={{display:"flex",gap:10}}>
+                    <button onClick={()=>setDeleteConfirm(null)} style={{flex:1,background:"transparent",border:`1px solid ${C.border}`,color:C.muted2,borderRadius:10,padding:"12px",fontWeight:600,cursor:"pointer",fontFamily:"'Barlow',sans-serif"}}>Cancelar</button>
+                    <button onClick={()=>confirmDelete(deleteConfirm)} style={{flex:1,background:C.red,border:"none",color:"#fff",borderRadius:10,padding:"12px",fontWeight:700,cursor:"pointer",fontFamily:"'Barlow',sans-serif"}}>Deletar</button>
                   </div>
                 </div>
               </div>
             )}
 
             {/* MODAL ADD/EDIT */}
-            {(modal === "add" || modal === "edit") && (
-              <div onClick={function(e) { if (e.target === e.currentTarget) closeModal(); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
-                <div style={{ background: C.surface, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, padding: "24px 20px 32px", maxHeight: "90vh", overflowY: "auto", border: `1px solid ${C.border}`, borderBottom: "none" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 22 }}>
-                    <div style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 26, letterSpacing: 3, color: C.accent }}>{modal === "edit" ? "EDITAR EXERCÍCIO" : "NOVO EXERCÍCIO"}</div>
-                    <button onClick={closeModal} style={{ background: "transparent", border: "none", color: C.muted, fontSize: 22, cursor: "pointer" }}>✕</button>
+            {(modal==="add"||modal==="edit")&&(
+              <div onClick={e=>{if(e.target===e.currentTarget)closeModal();}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.88)",zIndex:100,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+                <div style={{background:C.surface,borderRadius:"20px 20px 0 0",width:"100%",maxWidth:480,padding:"24px 20px 32px",maxHeight:"90vh",overflowY:"auto",border:`1px solid ${C.border}`,borderBottom:"none"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:22}}>
+                    <div style={{fontFamily:"'Bebas Neue',Impact,sans-serif",fontSize:26,letterSpacing:3,color:C.accent}}>{modal==="edit"?"EDITAR EXERCÍCIO":"NOVO EXERCÍCIO"}</div>
+                    <button onClick={closeModal} style={{background:"transparent",border:"none",color:C.muted,fontSize:22,cursor:"pointer"}}>✕</button>
                   </div>
-                  <div style={{ marginBottom: 20 }}>
-                    <label style={{ display: "block", fontSize: 10, fontWeight: 700, letterSpacing: 2, color: C.muted, textTransform: "uppercase", marginBottom: 7 }}>Nome do Exercício</label>
-                    <input style={{ width: "100%", background: "#111", border: `1px solid ${exerciseName.trim() ? C.accent + "55" : C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontSize: 15, outline: "none", fontFamily: "'Barlow', sans-serif" }} placeholder="Ex: Supino Reto, Agachamento..." value={exerciseName} onChange={function(e) { setExerciseName(e.target.value); }} />
+                  <div style={{marginBottom:20}}>
+                    <label style={{display:"block",fontSize:10,fontWeight:700,letterSpacing:2,color:C.muted,textTransform:"uppercase",marginBottom:7}}>Nome do Exercício</label>
+                    <input style={{width:"100%",background:"#111",border:`1px solid ${exerciseName.trim()?C.accent+"55":C.border}`,borderRadius:10,padding:"12px 14px",color:C.text,fontSize:15,outline:"none",fontFamily:"'Barlow',sans-serif"}} placeholder="Ex: Supino Reto, Agachamento..." value={exerciseName} onChange={e=>setExerciseName(e.target.value)} />
                   </div>
-                  <div style={{ marginBottom: 16 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                      <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: 2, color: C.muted, textTransform: "uppercase" }}>SÉRIES</label>
-                      <button onClick={addSet} style={{ background: C.accentDim, border: `1px solid ${C.accent}44`, color: C.accentText, borderRadius: 7, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow', sans-serif" }}>+ SÉRIE</button>
+                  <div style={{marginBottom:16}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                      <label style={{fontSize:10,fontWeight:700,letterSpacing:2,color:C.muted,textTransform:"uppercase"}}>SÉRIES</label>
+                      <button onClick={addSet} style={{background:C.accentDim,border:`1px solid ${C.accent}44`,color:C.accentText,borderRadius:7,padding:"5px 12px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Barlow',sans-serif"}}>+ SÉRIE</button>
                     </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "28px 1fr 1fr 28px", gap: 8, marginBottom: 6, paddingLeft: 4 }}>
-                      <div /><div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.muted, textTransform: "uppercase", textAlign: "center" }}>REPS</div>
-                      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.muted, textTransform: "uppercase", textAlign: "center" }}>CARGA (kg)</div><div />
+                    <div style={{display:"grid",gridTemplateColumns:"28px 1fr 1fr 28px",gap:8,marginBottom:6,paddingLeft:4}}>
+                      <div/><div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.muted,textTransform:"uppercase",textAlign:"center"}}>REPS</div>
+                      <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.muted,textTransform:"uppercase",textAlign:"center"}}>CARGA (kg)</div><div/>
                     </div>
-                    {sets.map(function(set, i) {
-                      return (
-                        <div key={i} style={{ display: "grid", gridTemplateColumns: "28px 1fr 1fr 28px", gap: 8, marginBottom: 8, alignItems: "center" }}>
-                          <div style={{ fontSize: 11, color: C.muted, fontFamily: "monospace", textAlign: "center" }}>S{i + 1}</div>
-                          <input type="number" min="0" style={{ background: "#111", border: `1px solid ${C.border}`, borderRadius: 8, padding: "11px 12px", color: C.text, fontSize: 15, outline: "none", fontFamily: "'Barlow', sans-serif", textAlign: "center", fontWeight: 700, width: "100%" }} placeholder="10" value={set.reps} onChange={function(e) { updateSet(i, "reps", e.target.value); }} />
-                          <input type="number" min="0" style={{ background: "#111", border: `1px solid ${C.border}`, borderRadius: 8, padding: "11px 12px", color: C.accent, fontSize: 15, outline: "none", fontFamily: "'Bebas Neue', Impact, sans-serif", textAlign: "center", letterSpacing: 1, width: "100%" }} placeholder="60" value={set.weight} onChange={function(e) { updateSet(i, "weight", e.target.value); }} />
-                          <button onClick={function() { removeSet(i); }} style={{ background: "transparent", border: "none", color: sets.length > 1 ? C.muted : "#2a2a2a", fontSize: 16, cursor: sets.length > 1 ? "pointer" : "default", padding: 0, lineHeight: 1 }}>✕</button>
-                        </div>
-                      );
-                    })}
+                    {sets.map((set,i)=>(
+                      <div key={i} style={{display:"grid",gridTemplateColumns:"28px 1fr 1fr 28px",gap:8,marginBottom:8,alignItems:"center"}}>
+                        <div style={{fontSize:11,color:C.muted,fontFamily:"monospace",textAlign:"center"}}>S{i+1}</div>
+                        <input type="number" min="0" style={{background:"#111",border:`1px solid ${C.border}`,borderRadius:8,padding:"11px 12px",color:C.text,fontSize:15,outline:"none",fontFamily:"'Barlow',sans-serif",textAlign:"center",fontWeight:700,width:"100%"}} placeholder="10" value={set.reps} onChange={e=>updateSet(i,"reps",e.target.value)} />
+                        <input type="number" min="0" style={{background:"#111",border:`1px solid ${C.border}`,borderRadius:8,padding:"11px 12px",color:C.accent,fontSize:15,outline:"none",fontFamily:"'Bebas Neue',Impact,sans-serif",textAlign:"center",letterSpacing:1,width:"100%"}} placeholder="60" value={set.weight} onChange={e=>updateSet(i,"weight",e.target.value)} />
+                        <button onClick={()=>removeSet(i)} style={{background:"transparent",border:"none",color:sets.length>1?C.muted:"#2a2a2a",fontSize:16,cursor:sets.length>1?"pointer":"default",padding:0,lineHeight:1}}>✕</button>
+                      </div>
+                    ))}
                   </div>
-                  <button onClick={saveExercise} style={{ width: "100%", background: exerciseName.trim() && sets.some(function(s) { return s.reps && s.weight; }) ? C.accent : "#2a2a2a", color: exerciseName.trim() && sets.some(function(s) { return s.reps && s.weight; }) ? "#000" : C.muted, border: "none", borderRadius: 13, padding: "16px", fontSize: 15, fontWeight: 800, letterSpacing: 1.5, cursor: "pointer", marginBottom: 10, fontFamily: "'Barlow', sans-serif" }}>SALVAR EXERCÍCIO</button>
-                  <button onClick={closeModal} style={{ width: "100%", background: "transparent", color: C.muted, border: `1px solid ${C.border}`, borderRadius: 13, padding: "14px", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "'Barlow', sans-serif" }}>Cancelar</button>
+                  <button onClick={saveExercise} style={{width:"100%",background:exerciseName.trim()&&sets.some(s=>s.reps&&s.weight)?C.accent:"#2a2a2a",color:exerciseName.trim()&&sets.some(s=>s.reps&&s.weight)?"#000":C.muted,border:"none",borderRadius:13,padding:"16px",fontSize:15,fontWeight:800,letterSpacing:1.5,cursor:"pointer",marginBottom:10,fontFamily:"'Barlow',sans-serif"}}>SALVAR EXERCÍCIO</button>
+                  <button onClick={closeModal} style={{width:"100%",background:"transparent",color:C.muted,border:`1px solid ${C.border}`,borderRadius:13,padding:"14px",fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"'Barlow',sans-serif"}}>Cancelar</button>
                 </div>
               </div>
             )}
 
             {/* MODAL DISPOSIÇÃO */}
-            {(modal === "energy" || modal === "energy_then_result") && (
-              <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
-                <div style={{ background: C.surface, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, padding: "24px 20px 32px", border: `1px solid ${C.border}`, borderBottom: "none" }}>
-                  <div style={{ textAlign: "center", marginBottom: 20 }}>
-                    <div style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 24, letterSpacing: 3, color: C.accent, marginBottom: 6 }}>COMO VOCÊ CHEGOU HOJE?</div>
-                    <div style={{ fontSize: 12, color: C.muted2 }}>Sua disposição antes de começar</div>
+            {(modal==="energy"||modal==="energy_then_result")&&(
+              <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.88)",zIndex:100,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+                <div style={{background:C.surface,borderRadius:"20px 20px 0 0",width:"100%",maxWidth:480,padding:"24px 20px 32px",border:`1px solid ${C.border}`,borderBottom:"none"}}>
+                  <div style={{textAlign:"center",marginBottom:20}}>
+                    <div style={{fontFamily:"'Bebas Neue',Impact,sans-serif",fontSize:24,letterSpacing:3,color:C.accent,marginBottom:6}}>COMO VOCÊ CHEGOU HOJE?</div>
+                    <div style={{fontSize:12,color:C.muted2}}>Sua disposição antes de começar</div>
                   </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    {ENERGY_OPTIONS.map(function(opt) {
-                      return (
-                        <button key={opt.value} onClick={function() { saveEnergy(opt.value); if (modal === "energy_then_result") setTimeout(function() { setModal("result"); }, 100); }} style={{ display: "flex", alignItems: "center", gap: 14, background: todayEnergy === opt.value ? C.accentDim : "#111", border: `1px solid ${todayEnergy === opt.value ? C.accent + "66" : C.border}`, borderRadius: 12, padding: "14px 16px", cursor: "pointer", textAlign: "left" }}>
-                          <span style={{ fontSize: 26 }}>{opt.emoji}</span>
-                          <span style={{ fontWeight: 700, fontSize: 14, color: C.text }}>{opt.label}</span>
-                          {todayEnergy === opt.value && <span style={{ marginLeft: "auto", color: C.accent, fontSize: 16 }}>✓</span>}
-                        </button>
-                      );
-                    })}
+                  <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                    {ENERGY_OPTIONS.map(opt=>(
+                      <button key={opt.value} onClick={()=>{saveEnergy(opt.value);if(modal==="energy_then_result")setTimeout(()=>setModal("result"),100);}} style={{display:"flex",alignItems:"center",gap:14,background:todayEnergy===opt.value?C.accentDim:"#111",border:`1px solid ${todayEnergy===opt.value?C.accent+"66":C.border}`,borderRadius:12,padding:"14px 16px",cursor:"pointer",textAlign:"left"}}>
+                        <span style={{fontSize:26}}>{opt.emoji}</span>
+                        <span style={{fontWeight:700,fontSize:14,color:C.text}}>{opt.label}</span>
+                        {todayEnergy===opt.value&&<span style={{marginLeft:"auto",color:C.accent,fontSize:16}}>✓</span>}
+                      </button>
+                    ))}
                   </div>
-                  <button onClick={closeModal} style={{ width: "100%", background: "transparent", color: C.muted, border: `1px solid ${C.border}`, borderRadius: 13, padding: "13px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'Barlow', sans-serif", marginTop: 14 }}>Cancelar</button>
+                  <button onClick={closeModal} style={{width:"100%",background:"transparent",color:C.muted,border:`1px solid ${C.border}`,borderRadius:13,padding:"13px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"'Barlow',sans-serif",marginTop:14}}>Cancelar</button>
                 </div>
               </div>
             )}
 
             {/* MODAL RESULTADO */}
-            {modal === "result" && (
-              <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
-                <div style={{ background: C.surface, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, padding: "24px 20px 32px", border: `1px solid ${C.border}`, borderBottom: "none" }}>
-                  <div style={{ textAlign: "center", marginBottom: 20 }}>
-                    <div style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 24, letterSpacing: 3, color: C.blue, marginBottom: 6 }}>O TREINO FOI COMO VOCÊ QUERIA?</div>
-                    <div style={{ fontSize: 12, color: C.muted2 }}>Avalie sua performance de hoje</div>
+            {modal==="result"&&(
+              <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.88)",zIndex:100,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+                <div style={{background:C.surface,borderRadius:"20px 20px 0 0",width:"100%",maxWidth:480,padding:"24px 20px 32px",border:`1px solid ${C.border}`,borderBottom:"none"}}>
+                  <div style={{textAlign:"center",marginBottom:20}}>
+                    <div style={{fontFamily:"'Bebas Neue',Impact,sans-serif",fontSize:24,letterSpacing:3,color:C.blue,marginBottom:6}}>O TREINO FOI COMO VOCÊ QUERIA?</div>
+                    <div style={{fontSize:12,color:C.muted2}}>Avalie sua performance de hoje</div>
                   </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    {RESULT_OPTIONS.map(function(opt) {
-                      return (
-                        <button key={opt.value} onClick={function() { saveResult(opt.value); }} style={{ display: "flex", alignItems: "center", gap: 14, background: "#111", border: `1px solid ${C.border}`, borderRadius: 12, padding: "14px 16px", cursor: "pointer", textAlign: "left" }}>
-                          <span style={{ fontSize: 26 }}>{opt.emoji}</span>
-                          <span style={{ fontWeight: 700, fontSize: 14, color: C.text }}>{opt.label}</span>
-                        </button>
-                      );
-                    })}
+                  <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                    {RESULT_OPTIONS.map(opt=>(
+                      <button key={opt.value} onClick={()=>saveResult(opt.value)} style={{display:"flex",alignItems:"center",gap:14,background:"#111",border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",cursor:"pointer",textAlign:"left"}}>
+                        <span style={{fontSize:26}}>{opt.emoji}</span>
+                        <span style={{fontWeight:700,fontSize:14,color:C.text}}>{opt.label}</span>
+                      </button>
+                    ))}
                   </div>
-                  <button onClick={closeModal} style={{ width: "100%", background: "transparent", color: C.muted, border: `1px solid ${C.border}`, borderRadius: 13, padding: "13px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'Barlow', sans-serif", marginTop: 14 }}>Pular</button>
+                  <button onClick={closeModal} style={{width:"100%",background:"transparent",color:C.muted,border:`1px solid ${C.border}`,borderRadius:13,padding:"13px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"'Barlow',sans-serif",marginTop:14}}>Pular</button>
                 </div>
               </div>
             )}
 
-            {/* FLOATING TIMER */}
-            <button onClick={function() { setTimerOpen(function(o) { return !o; }); }} style={{ position: "fixed", bottom: 108, right: 16, zIndex: 300, width: 52, height: 52, borderRadius: "50%", background: timerRunning ? C.accent : C.surface2, border: `2px solid ${timerRunning ? C.accent : C.border}`, color: timerRunning ? "#000" : C.muted2, fontSize: 22, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: timerRunning ? `0 0 20px ${C.accent}55` : "0 4px 16px rgba(0,0,0,0.5)", transition: "all 0.2s" }}>⏱</button>
-            {timerOpen && (
-              <div style={{ position: "fixed", bottom: 170, right: 16, zIndex: 300, background: C.surface, border: `1px solid ${timerRunning ? C.accent + "66" : C.border}`, borderRadius: 18, padding: "18px 20px 16px", boxShadow: "0 8px 32px rgba(0,0,0,0.6)", minWidth: 180, textAlign: "center" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                  <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.muted, textTransform: "uppercase" }}>CRONÔMETRO</span>
-                  <button onClick={function() { setTimerOpen(false); }} style={{ background: "transparent", border: "none", color: C.muted, fontSize: 14, cursor: "pointer" }}>✕</button>
+            {/* TIMER */}
+            <button onClick={()=>setTimerOpen(o=>!o)} style={{position:"fixed",bottom:108,right:16,zIndex:300,width:52,height:52,borderRadius:"50%",background:timerRunning?C.accent:C.surface2,border:`2px solid ${timerRunning?C.accent:C.border}`,color:timerRunning?"#000":C.muted2,fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.2s"}}>⏱</button>
+            {timerOpen&&(
+              <div style={{position:"fixed",bottom:170,right:16,zIndex:300,background:C.surface,border:`1px solid ${timerRunning?C.accent+"66":C.border}`,borderRadius:18,padding:"18px 20px 16px",boxShadow:"0 8px 32px rgba(0,0,0,0.6)",minWidth:180,textAlign:"center"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                  <span style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.muted,textTransform:"uppercase"}}>CRONÔMETRO</span>
+                  <button onClick={()=>setTimerOpen(false)} style={{background:"transparent",border:"none",color:C.muted,fontSize:14,cursor:"pointer"}}>✕</button>
                 </div>
-                <div style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 52, letterSpacing: 4, color: timerRunning ? C.accent : C.text, lineHeight: 1, marginBottom: 14 }}>
-                  {String(Math.floor(timerSeconds / 60)).padStart(2, "0")}:{String(timerSeconds % 60).padStart(2, "0")}
+                <div style={{fontFamily:"'Bebas Neue',Impact,sans-serif",fontSize:52,letterSpacing:4,color:timerRunning?C.accent:C.text,lineHeight:1,marginBottom:14}}>
+                  {String(Math.floor(timerSeconds/60)).padStart(2,"0")}:{String(timerSeconds%60).padStart(2,"0")}
                 </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button onClick={function() { setTimerRunning(function(r) { return !r; }); }} style={{ flex: 1, background: timerRunning ? C.redDim : C.accentDim, border: `1px solid ${timerRunning ? C.red + "66" : C.accent + "66"}`, color: timerRunning ? C.red : C.accentText, borderRadius: 10, padding: "10px 0", fontSize: 11, fontWeight: 800, letterSpacing: 1, cursor: "pointer", fontFamily: "'Barlow', sans-serif" }}>{timerRunning ? "⏸ PAUSAR" : "▶ INICIAR"}</button>
-                  <button onClick={function() { setTimerSeconds(0); setTimerRunning(false); }} style={{ background: "transparent", border: `1px solid ${C.border}`, color: C.muted, borderRadius: 10, padding: "10px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow', sans-serif" }}>↺</button>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>setTimerRunning(r=>!r)} style={{flex:1,background:timerRunning?C.redDim:C.accentDim,border:`1px solid ${timerRunning?C.red+"66":C.accent+"66"}`,color:timerRunning?C.red:C.accentText,borderRadius:10,padding:"10px 0",fontSize:11,fontWeight:800,letterSpacing:1,cursor:"pointer",fontFamily:"'Barlow',sans-serif"}}>{timerRunning?"⏸ PAUSAR":"▶ INICIAR"}</button>
+                  <button onClick={()=>{setTimerSeconds(0);setTimerRunning(false);}} style={{background:"transparent",border:`1px solid ${C.border}`,color:C.muted,borderRadius:10,padding:"10px 12px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Barlow',sans-serif"}}>↺</button>
                 </div>
               </div>
             )}
@@ -1005,9 +1230,70 @@
       );
     }
 
-    const container = document.getElementById('root');
-    const root = ReactDOM.createRoot(container);
-    root.render(<GymLog />);
+    // ════════════════════════════════════════════════════════════
+    //  ROOT CONTROLLER
+    // ════════════════════════════════════════════════════════════
+    function App() {
+      const [authState, setAuthState] = useState("loading"); // loading | auth | onboarding | app
+      const [user,      setUser]      = useState(null);
+      const [isNew,     setIsNew]     = useState(false);
+
+      useEffect(()=>{
+        // Verifica sessão atual
+        sb.auth.getSession().then(({data:{session}})=>{
+          if (session?.user) {
+            setUser(session.user);
+            checkOnboarding(session.user);
+          } else {
+            setAuthState("auth");
+          }
+        });
+
+        // Listener para OAuth redirect e mudanças de sessão
+        const {data:{subscription}} = sb.auth.onAuthStateChange((_event, session)=>{
+          if (session?.user) {
+            setUser(session.user);
+            if (_event==="SIGNED_IN") checkOnboarding(session.user);
+          } else {
+            setUser(null);
+            setAuthState("auth");
+          }
+        });
+        return ()=>subscription.unsubscribe();
+      },[]);
+
+      const checkOnboarding = async (u) => {
+        try {
+          // Usa metadados do user para saber se é novo (conta criada há menos de 30s)
+          const createdAt = new Date(u.created_at);
+          const now = new Date();
+          const isNewUser = (now - createdAt) < 30000;
+          if (isNewUser) {
+            setIsNew(true);
+            setAuthState("onboarding");
+          } else {
+            setAuthState("app");
+          }
+        } catch(e) {
+          setAuthState("app");
+        }
+      };
+
+      if (authState==="loading") return (
+        <div style={{minHeight:"100vh",background:"#0c0c0c",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12}}>
+          <div style={{fontFamily:"Impact,sans-serif",fontSize:32,color:"#C8FF3E",letterSpacing:6}}>IRON LOG</div>
+          <div style={{fontSize:11,letterSpacing:4,color:"#555",textTransform:"uppercase"}}>Carregando...</div>
+        </div>
+      );
+
+      if (authState==="auth")        return <AuthScreen onAuth={u=>{setUser(u);checkOnboarding(u);}} />;
+      if (authState==="onboarding")  return <OnboardingScreen onDone={()=>setAuthState("app")} />;
+      if (authState==="app"&&user)   return <GymLog user={user} onSignOut={()=>{setUser(null);setAuthState("auth");}} />;
+      return null;
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App />);
   </script>
 </body>
 </html>
