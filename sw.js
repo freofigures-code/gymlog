@@ -85,8 +85,8 @@ const server = http.createServer(function(req, res) {
 
 // FIX CRÍTICO: aumenta keepAliveTimeout para evitar "Failed to fetch"
 // com reverse proxies como Traefik/EasyPanel
-server.keepAliveTimeout = 61 * 1000; // 61 segundos
-server.headersTimeout = 65 * 1000;   // sempre maior que keepAliveTimeout
+server.keepAliveTimeout = 185 * 1000; // 61 segundos
+server.headersTimeout = 190 * 1000;   // sempre maior que keepAliveTimeout
 
 server.listen(PORT, function() {
   console.log("GymLog API rodando na porta " + PORT);
