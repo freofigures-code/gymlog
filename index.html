@@ -109,14 +109,23 @@
 
     // Calcula progressão de carga comparando com entrada anterior do mesmo exercício
     function getProgression(exName, currentSets, history) {
-      for (let i = 0; i < history.length; i++) {
-        const entry = history[i];
-        const found = entry.exercises.find(function(e) { return e.name === exName; });
+      // Acha a entrada mais recente desse exercício no histórico
+      for (var i = 0; i < history.length; i++) {
+        var entry = history[i];
+        var found = entry.exercises.find(function(e) { return e.name === exName; });
         if (found) {
-          const prevMax = Math.max(...found.sets.map(function(s) { return s.weight; }));
-          const currMax = Math.max(...currentSets.map(function(s) { return s.weight; }));
-          if (currMax > prevMax) return { type: "up", diff: currMax - prevMax };
-          if (currMax < prevMax) return { type: "down", diff: prevMax - currMax };
+          // Compara volume total: soma de (reps × kg) em todas as séries
+          var prevVolume = found.sets.reduce(function(acc, s) { return acc + (s.reps * s.weight); }, 0);
+          var currVolume = currentSets.reduce(function(acc, s) { return acc + (s.reps * s.weight); }, 0);
+          // Também compara carga máxima usada
+          var prevMaxWeight = Math.max.apply(null, found.sets.map(function(s) { return s.weight; }));
+          var currMaxWeight = Math.max.apply(null, currentSets.map(function(s) { return s.weight; }));
+    
+          if (currMaxWeight > prevMaxWeight) return { type: "up", diff: currMaxWeight - prevMaxWeight, diffVolume: currVolume - prevVolume };
+          if (currMaxWeight < prevMaxWeight) return { type: "down", diff: prevMaxWeight - currMaxWeight, diffVolume: currVolume - prevVolume };
+          // Mesmo peso máximo — checa se fez mais volume (mais reps ou mais séries)
+          if (currVolume > prevVolume) return { type: "volume_up", diffVolume: currVolume - prevVolume };
+          if (currVolume < prevVolume) return { type: "volume_down", diffVolume: prevVolume - currVolume };
           return { type: "equal" };
         }
       }
@@ -260,25 +269,59 @@
         setAiReport("");
 
         try {
-          // Últimos 7 dias de histórico
+          // Separa histórico: semana atual vs anterior
           const sevenDaysAgo = new Date();
           sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
           const recentHistory = history.filter(function(h) {
             return new Date(h.date + "T00:00:00") >= sevenDaysAgo;
           });
+          const olderHistory = history.filter(function(h) {
+            return new Date(h.date + "T00:00:00") < sevenDaysAgo;
+          });
 
-          // Progressão de cada exercício
-          const progressionData = [];
+          // Para cada exercício da semana, busca a entrada anterior no histórico mais antigo
+          const comparativo = [];
           recentHistory.forEach(function(entry) {
             entry.exercises.forEach(function(ex) {
-              const prog = getProgression(ex.name, ex.sets, history.filter(function(h) { return h.date < entry.date; }));
-              progressionData.push({
-                data: entry.date,
-                dia: entry.day,
+              var anterior = null;
+              for (var i = 0; i < olderHistory.length; i++) {
+                var found = olderHistory[i].exercises.find(function(e) { return e.name === ex.name; });
+                if (found) { anterior = { data: olderHistory[i].date, sets: found.sets }; break; }
+              }
+
+              var currVolume    = ex.sets.reduce(function(acc, s) { return acc + (s.reps * s.weight); }, 0);
+              var currMaxKg     = Math.max.apply(null, ex.sets.map(function(s) { return s.weight; }));
+              var currTotalReps = ex.sets.reduce(function(acc, s) { return acc + s.reps; }, 0);
+
+              var item = {
                 exercicio: ex.name,
-                series: ex.sets,
-                progressao: prog
-              });
+                dia: entry.day,
+                data: entry.date,
+                series_esta_semana: ex.sets.map(function(s, i) { return "S" + (i+1) + ": " + s.reps + "rep x " + s.weight + "kg"; }),
+                volume_total_kg: currVolume,
+                carga_maxima_kg: currMaxKg,
+                total_repeticoes: currTotalReps
+              };
+
+              if (anterior) {
+                var prevVolume    = anterior.sets.reduce(function(acc, s) { return acc + (s.reps * s.weight); }, 0);
+                var prevMaxKg     = Math.max.apply(null, anterior.sets.map(function(s) { return s.weight; }));
+                var prevTotalReps = anterior.sets.reduce(function(acc, s) { return acc + s.reps; }, 0);
+                item.ultima_vez           = anterior.data;
+                item.series_anterior      = anterior.sets.map(function(s, i) { return "S" + (i+1) + ": " + s.reps + "rep x " + s.weight + "kg"; });
+                item.variacao_carga_kg    = currMaxKg - prevMaxKg;
+                item.variacao_volume_kg   = currVolume - prevVolume;
+                item.variacao_repeticoes  = currTotalReps - prevTotalReps;
+                item.status = currMaxKg > prevMaxKg ? "PROGREDIU CARGA" :
+                              currMaxKg < prevMaxKg ? "REGREDIU CARGA" :
+                              currVolume > prevVolume ? "MAIS VOLUME (mesma carga)" :
+                              currVolume < prevVolume ? "MENOS VOLUME" : "IGUAL";
+              } else {
+                item.status = "PRIMEIRO REGISTRO";
+              }
+
+              comparativo.push(item);
             });
           });
 
@@ -287,36 +330,28 @@
           Object.keys(feelings).forEach(function(date) {
             const d = new Date(date + "T00:00:00");
             if (d >= sevenDaysAgo) {
-              feelingsData.push({ data: date, ...feelings[date] });
+              const energyOpt = ENERGY_OPTIONS.find(function(e) { return e.value === feelings[date].energy; });
+              const resultOpt = RESULT_OPTIONS.find(function(r) { return r.value === feelings[date].result; });
+              feelingsData.push({
+                data: date,
+                disposicao: energyOpt ? energyOpt.emoji + " " + energyOpt.label : "não registrado",
+                resultado:  resultOpt ? resultOpt.emoji + " " + resultOpt.label : "não registrado"
+              });
             }
           });
 
-          const prompt = `Você é um personal trainer experiente analisando os dados de treino da semana do atleta. Seja direto, motivador e técnico como um bom PT faria. Use linguagem informal mas profissional. Máximo 400 palavras.
-
-DADOS DA SEMANA (últimos 7 dias):
-
-TREINOS E EXERCÍCIOS:
-${JSON.stringify(progressionData, null, 2)}
-
-DISPOSIÇÃO E RESULTADO DOS TREINOS:
-${JSON.stringify(feelingsData.map(function(f) {
-  const energyLabel = ENERGY_OPTIONS.find(function(e) { return e.value === f.energy; });
-  const resultLabel = RESULT_OPTIONS.find(function(r) { return r.value === f.result; });
-  return {
-    data: f.data,
-    disposicao_inicial: energyLabel ? energyLabel.emoji + " " + energyLabel.label : "não registrado",
-    resultado_final: resultLabel ? resultLabel.emoji + " " + resultLabel.label : "não registrado"
-  };
-}), null, 2)}
-
-Analise:
-1. Evolução de cargas (quais exercícios progrediram, estagnaram ou regrediram)
-2. Relação entre disposição inicial e resultado final (quando treinou mal disposto mas foi bem, ou vice-versa)
-3. Volume e frequência da semana
-4. 2-3 recomendações práticas e objetivas para a próxima semana
-5. Uma frase motivacional no final
-
-Responda em português brasileiro.`;
+          const prompt = "Você é um personal trainer experiente analisando os dados de treino da semana do atleta. Seja direto, motivador e técnico. Use linguagem informal mas profissional. Máximo 400 palavras.\n\n" +
+            "COMPARATIVO DE EXERCÍCIOS (esta semana vs semana anterior):\n" +
+            JSON.stringify(comparativo, null, 2) +
+            "\n\nDISPOSIÇÃO E RESULTADO DOS TREINOS DA SEMANA:\n" +
+            JSON.stringify(feelingsData, null, 2) +
+            "\n\nAnalise:\n" +
+            "1. Quais exercícios progrediram em carga ou volume vs semana anterior (use os campos variacao_carga_kg e variacao_volume_kg)\n" +
+            "2. Quais estagnaram ou regrediram e possível motivo\n" +
+            "3. Relação entre disposição inicial e resultado final\n" +
+            "4. 2-3 recomendações práticas para a próxima semana\n" +
+            "5. Uma frase motivacional no final\n\n" +
+            "Responda em português brasileiro. Não invente dados que não estejam nos campos acima.";
 
           const response = await fetch(apiKey + "/analyze", {
             method: "POST",
