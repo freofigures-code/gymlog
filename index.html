@@ -38,11 +38,7 @@
         }).catch(console.error);
     }
 
-    // ─── COLOQUE A URL DA SUA VPS AQUI ───────────────────────────────────────
-    // Após criar o app no EasyPanel, cole o link gerado abaixo
-    // Exemplo: "https://gymlog-api.7t6kue.easypanel.host"
     window.CLAUDE_API_KEY = "https://chatwoot-app-academia-api-claude.7t6kue.easypanel.host/";
-    // ─────────────────────────────────────────────────────────────────────────
 
     window.storage = {
       get: async function(key) {
@@ -57,7 +53,6 @@
   <script type="text/babel">
     const { useState, useEffect, useRef } = React;
 
-    // ── Dia da semana atual ──
     const WEEKDAY_MAP = { 0: "dom", 1: "seg", 2: "ter", 3: "qua", 4: "qui", 5: "sex", 6: "sab" };
     function getTodayKey() { return WEEKDAY_MAP[new Date().getDay()] || "seg"; }
 
@@ -78,11 +73,11 @@
       orange: "#fb923c", orangeDim: "#fb923c18",
     };
 
-    const STORAGE_KEY   = "gymlog-workouts-v1";
-    const HISTORY_KEY   = "gymlog-history-v1";
-    const FEELINGS_KEY  = "gymlog-feelings-v1";
+    const STORAGE_KEY  = "gymlog-workouts-v1";
+    const HISTORY_KEY  = "gymlog-history-v1";
+    const FEELINGS_KEY = "gymlog-feelings-v1";
+    const PHOTOS_KEY   = "gymlog-photos-v1"; // { "2025-W23": { front: "base64...", side: "base64...", back: "base64..." } }
 
-    // disposição: início do treino
     const ENERGY_OPTIONS = [
       { value: 1, emoji: "😴", label: "Mal dormido" },
       { value: 2, emoji: "😐", label: "Normal" },
@@ -91,7 +86,6 @@
       { value: 5, emoji: "⚡", label: "Pra destruir" },
     ];
 
-    // resultado: fim do treino
     const RESULT_OPTIONS = [
       { value: 1, emoji: "👎", label: "Abaixo do esperado" },
       { value: 2, emoji: "😐", label: "Mediano" },
@@ -107,23 +101,25 @@
 
     function todayISO() { return new Date().toISOString().slice(0, 10); }
 
-    // Calcula progressão de carga comparando com entrada anterior do mesmo exercício
+    // Retorna chave da semana ISO: "2025-W23"
+    function getWeekKey(dateISO) {
+      const d = new Date((dateISO || todayISO()) + "T00:00:00");
+      const jan4 = new Date(d.getFullYear(), 0, 4);
+      const week = Math.ceil(((d - jan4) / 86400000 + jan4.getDay() + 1) / 7);
+      return d.getFullYear() + "-W" + String(week).padStart(2, "0");
+    }
+
     function getProgression(exName, currentSets, history) {
-      // Acha a entrada mais recente desse exercício no histórico
       for (var i = 0; i < history.length; i++) {
         var entry = history[i];
         var found = entry.exercises.find(function(e) { return e.name === exName; });
         if (found) {
-          // Compara volume total: soma de (reps × kg) em todas as séries
           var prevVolume = found.sets.reduce(function(acc, s) { return acc + (s.reps * s.weight); }, 0);
           var currVolume = currentSets.reduce(function(acc, s) { return acc + (s.reps * s.weight); }, 0);
-          // Também compara carga máxima usada
           var prevMaxWeight = Math.max.apply(null, found.sets.map(function(s) { return s.weight; }));
           var currMaxWeight = Math.max.apply(null, currentSets.map(function(s) { return s.weight; }));
-    
           if (currMaxWeight > prevMaxWeight) return { type: "up", diff: currMaxWeight - prevMaxWeight, diffVolume: currVolume - prevVolume };
           if (currMaxWeight < prevMaxWeight) return { type: "down", diff: prevMaxWeight - currMaxWeight, diffVolume: currVolume - prevVolume };
-          // Mesmo peso máximo — checa se fez mais volume (mais reps ou mais séries)
           if (currVolume > prevVolume) return { type: "volume_up", diffVolume: currVolume - prevVolume };
           if (currVolume < prevVolume) return { type: "volume_down", diffVolume: prevVolume - currVolume };
           return { type: "equal" };
@@ -132,40 +128,66 @@
       return null;
     }
 
+    // Comprime imagem para base64 reduzido (max 800px, qualidade 0.7)
+    function compressImage(file, callback) {
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const img = new Image();
+        img.onload = function() {
+          const canvas = document.createElement("canvas");
+          const MAX = 800;
+          let w = img.width, h = img.height;
+          if (w > h) { if (w > MAX) { h = h * MAX / w; w = MAX; } }
+          else { if (h > MAX) { w = w * MAX / h; h = MAX; } }
+          canvas.width = w; canvas.height = h;
+          canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+          callback(canvas.toDataURL("image/jpeg", 0.7).split(",")[1]);
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
     // ── COMPONENTE PRINCIPAL ──
     function GymLog() {
-      const [workouts, setWorkouts]         = useState({});
-      const [history, setHistory]           = useState([]);
-      const [feelings, setFeelings]         = useState({}); // { "2025-06-01": { energy: 4, result: 5 } }
-      const [activeDay, setActiveDay]       = useState(getTodayKey());
-      const [modal, setModal]               = useState(null); // "add"|"edit"|"energy"|"result"|"ai"
-      const [editId, setEditId]             = useState(null);
-      const [loading, setLoading]           = useState(true);
-      const [saving, setSaving]             = useState(false);
+      const [workouts, setWorkouts]           = useState({});
+      const [history, setHistory]             = useState([]);
+      const [feelings, setFeelings]           = useState({});
+      const [weekPhotos, setWeekPhotos]       = useState({}); // todas as semanas
+      const [activeDay, setActiveDay]         = useState(getTodayKey());
+      const [modal, setModal]                 = useState(null);
+      const [editId, setEditId]               = useState(null);
+      const [loading, setLoading]             = useState(true);
+      const [saving, setSaving]               = useState(false);
       const [deleteConfirm, setDeleteConfirm] = useState(null);
-      const [view, setView]                 = useState("treino");
-      const [exerciseName, setExerciseName] = useState("");
-      const [timerSeconds, setTimerSeconds] = useState(0);
-      const [timerRunning, setTimerRunning] = useState(false);
-      const [timerOpen, setTimerOpen]       = useState(false);
-      const [sets, setSets]                 = useState([{ reps: "", weight: "" }]);
-      const [aiReport, setAiReport]         = useState("");
-      const [aiLoading, setAiLoading]       = useState(false);
-      const [aiError, setAiError]           = useState("");
-      const [todayEnergy, setTodayEnergy]   = useState(null);
-      const [todayResult, setTodayResult]   = useState(null);
+      const [view, setView]                   = useState("treino");
+      const [exerciseName, setExerciseName]   = useState("");
+      const [timerSeconds, setTimerSeconds]   = useState(0);
+      const [timerRunning, setTimerRunning]   = useState(false);
+      const [timerOpen, setTimerOpen]         = useState(false);
+      const [sets, setSets]                   = useState([{ reps: "", weight: "" }]);
+      const [aiReport, setAiReport]           = useState("");
+      const [aiLoading, setAiLoading]         = useState(false);
+      const [aiError, setAiError]             = useState("");
+      const [todayEnergy, setTodayEnergy]     = useState(null);
+      const [todayResult, setTodayResult]     = useState(null);
+      // Chat
+      const [chatMessages, setChatMessages]   = useState([]); // [{ role, content, isText }]
+      const [chatInput, setChatInput]         = useState("");
+      const [chatLoading, setChatLoading]     = useState(false);
+      const chatEndRef = useRef(null);
+      // Fotos da semana atual
+      const currentWeekKey = getWeekKey(todayISO());
+      const currentPhotos = weekPhotos[currentWeekKey] || {};
 
       useEffect(function() { loadData(); }, []);
 
       useEffect(function() {
         if (!timerRunning) return;
-        const interval = setInterval(function() {
-          setTimerSeconds(function(s) { return s + 1; });
-        }, 1000);
+        const interval = setInterval(function() { setTimerSeconds(function(s) { return s + 1; }); }, 1000);
         return function() { clearInterval(interval); };
       }, [timerRunning]);
 
-      // Carrega disposição do dia ao mudar de dia
       useEffect(function() {
         const today = todayISO();
         if (feelings[today]) {
@@ -176,6 +198,10 @@
           setTodayResult(null);
         }
       }, [feelings]);
+
+      useEffect(function() {
+        if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: "smooth" });
+      }, [chatMessages]);
 
       const loadData = async function() {
         try {
@@ -188,11 +214,10 @@
             const f = JSON.parse(r3.value);
             setFeelings(f);
             const today = todayISO();
-            if (f[today]) {
-              setTodayEnergy(f[today].energy || null);
-              setTodayResult(f[today].result || null);
-            }
+            if (f[today]) { setTodayEnergy(f[today].energy || null); setTodayResult(f[today].result || null); }
           }
+          const r4 = await window.storage.get(PHOTOS_KEY);
+          if (r4) setWeekPhotos(JSON.parse(r4.value));
         } catch(_) {}
         setLoading(false);
       };
@@ -202,34 +227,22 @@
         try { await window.storage.set(STORAGE_KEY, JSON.stringify(data)); } catch(e) {}
         setTimeout(function() { setSaving(false); }, 600);
       };
+      const saveHistory  = async function(data) { try { await window.storage.set(HISTORY_KEY,  JSON.stringify(data)); } catch(e) {} };
+      const saveFeelings = async function(data) { try { await window.storage.set(FEELINGS_KEY, JSON.stringify(data)); } catch(e) {} };
+      const savePhotos   = async function(data) { try { await window.storage.set(PHOTOS_KEY,   JSON.stringify(data)); } catch(e) {} };
 
-      const saveHistory = async function(data) {
-        try { await window.storage.set(HISTORY_KEY, JSON.stringify(data)); } catch(e) {}
-      };
-
-      const saveFeelings = async function(data) {
-        try { await window.storage.set(FEELINGS_KEY, JSON.stringify(data)); } catch(e) {}
-      };
-
-      // Salva disposição inicial
       const saveEnergy = async function(value) {
         const today = todayISO();
         const updated = { ...feelings, [today]: { ...(feelings[today] || {}), energy: value } };
-        setFeelings(updated);
-        setTodayEnergy(value);
-        await saveFeelings(updated);
-        setModal(null);
+        setFeelings(updated); setTodayEnergy(value);
+        await saveFeelings(updated); setModal(null);
       };
 
-      // Salva resultado final + pergunta se quer finalizar
       const saveResult = async function(value) {
         const today = todayISO();
         const updated = { ...feelings, [today]: { ...(feelings[today] || {}), result: value } };
-        setFeelings(updated);
-        setTodayResult(value);
-        await saveFeelings(updated);
-        setModal(null);
-        // Agora finaliza o treino de verdade
+        setFeelings(updated); setTodayResult(value);
+        await saveFeelings(updated); setModal(null);
         await doFinishWorkout();
       };
 
@@ -239,124 +252,135 @@
         const today = todayISO();
         const entry = { date: today, day: activeDay, exercises: exs };
         const updated = [entry, ...history.filter(function(h) { return !(h.date === today && h.day === activeDay); })];
-        setHistory(updated);
-        await saveHistory(updated);
+        setHistory(updated); await saveHistory(updated);
         alert("✅ Treino salvo no histórico!");
       };
 
-      // Ao clicar em finalizar: primeiro pede disposição inicial se não tiver, depois resultado
       const finishWorkout = function() {
         const exs = workouts[activeDay] || [];
         if (exs.length === 0) return;
-        if (!todayEnergy) {
-          // Pede disposição inicial antes
-          setModal("energy_then_result");
-        } else {
-          setModal("result");
-        }
+        if (!todayEnergy) { setModal("energy_then_result"); } else { setModal("result"); }
       };
 
-      // ── ANÁLISE DA IA ──
+      // Upload de foto
+      const handlePhotoUpload = function(slot, file) {
+        if (!file) return;
+        compressImage(file, function(base64) {
+          const updated = { ...weekPhotos, [currentWeekKey]: { ...currentPhotos, [slot]: base64 } };
+          setWeekPhotos(updated);
+          savePhotos(updated);
+        });
+      };
+
+      const removePhoto = function(slot) {
+        const updated = { ...weekPhotos };
+        if (updated[currentWeekKey]) {
+          updated[currentWeekKey] = { ...updated[currentWeekKey] };
+          delete updated[currentWeekKey][slot];
+        }
+        setWeekPhotos(updated); savePhotos(updated);
+      };
+
+      // ── MONTA CONTEXTO COMPLETO PARA A IA ──
+      const buildAIContext = function(photos) {
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+        const recentHistory = history.filter(function(h) { return new Date(h.date + "T00:00:00") >= sevenDaysAgo; });
+        const olderHistory  = history.filter(function(h) { return new Date(h.date + "T00:00:00") < sevenDaysAgo; });
+
+        const comparativo = [];
+        recentHistory.forEach(function(entry) {
+          entry.exercises.forEach(function(ex) {
+            var anterior = null;
+            for (var i = 0; i < olderHistory.length; i++) {
+              var found = olderHistory[i].exercises.find(function(e) { return e.name === ex.name; });
+              if (found) { anterior = { data: olderHistory[i].date, sets: found.sets }; break; }
+            }
+            var currVolume    = ex.sets.reduce(function(acc, s) { return acc + (s.reps * s.weight); }, 0);
+            var currMaxKg     = Math.max.apply(null, ex.sets.map(function(s) { return s.weight; }));
+            var currTotalReps = ex.sets.reduce(function(acc, s) { return acc + s.reps; }, 0);
+            var item = {
+              exercicio: ex.name, dia: entry.day, data: entry.date,
+              series_esta_semana: ex.sets.map(function(s, i) { return "S"+(i+1)+": "+s.reps+"rep x "+s.weight+"kg"; }),
+              volume_total_kg: currVolume, carga_maxima_kg: currMaxKg, total_repeticoes: currTotalReps
+            };
+            if (anterior) {
+              var prevVolume    = anterior.sets.reduce(function(acc, s) { return acc + (s.reps * s.weight); }, 0);
+              var prevMaxKg     = Math.max.apply(null, anterior.sets.map(function(s) { return s.weight; }));
+              var prevTotalReps = anterior.sets.reduce(function(acc, s) { return acc + s.reps; }, 0);
+              item.ultima_vez          = anterior.data;
+              item.series_anterior     = anterior.sets.map(function(s, i) { return "S"+(i+1)+": "+s.reps+"rep x "+s.weight+"kg"; });
+              item.variacao_carga_kg   = currMaxKg - prevMaxKg;
+              item.variacao_volume_kg  = currVolume - prevVolume;
+              item.variacao_repeticoes = currTotalReps - prevTotalReps;
+              item.status = currMaxKg > prevMaxKg ? "PROGREDIU CARGA" :
+                            currMaxKg < prevMaxKg ? "REGREDIU CARGA" :
+                            currVolume > prevVolume ? "MAIS VOLUME (mesma carga)" :
+                            currVolume < prevVolume ? "MENOS VOLUME" : "IGUAL";
+            } else { item.status = "PRIMEIRO REGISTRO"; }
+            comparativo.push(item);
+          });
+        });
+
+        const feelingsData = [];
+        Object.keys(feelings).forEach(function(date) {
+          const d = new Date(date + "T00:00:00");
+          if (d >= sevenDaysAgo) {
+            const energyOpt = ENERGY_OPTIONS.find(function(e) { return e.value === feelings[date].energy; });
+            const resultOpt = RESULT_OPTIONS.find(function(r) { return r.value === feelings[date].result; });
+            feelingsData.push({ data: date, disposicao: energyOpt ? energyOpt.emoji+" "+energyOpt.label : "não registrado", resultado: resultOpt ? resultOpt.emoji+" "+resultOpt.label : "não registrado" });
+          }
+        });
+
+        const hasPhotos = photos && (photos.front || photos.side || photos.back);
+        const systemPrompt = "Você é um personal trainer experiente e nutricionista esportivo. O atleta é NATURAL (não usa anabolizantes). " +
+          "Analise os dados de treino e" + (hasPhotos ? " as fotos do físico enviadas" : "") + ". " +
+          "Seja direto, motivador e técnico. Use linguagem informal mas profissional. " +
+          "Quando analisar as fotos, avalie: definição muscular atual, grupos musculares mais desenvolvidos, grupos que precisam de mais atenção, simetria e pontos de melhora realistas para um atleta natural. " +
+          "Tenha memória de tudo que foi discutido nesta conversa para manter contexto.";
+
+        const textContent = "COMPARATIVO DE EXERCÍCIOS (esta semana vs semana anterior):\n" +
+          JSON.stringify(comparativo, null, 2) +
+          "\n\nDISPOSIÇÃO E RESULTADO DOS TREINOS DA SEMANA:\n" +
+          JSON.stringify(feelingsData, null, 2) +
+          (hasPhotos ? "\n\nFOTOS DO FÍSICO: As imagens enviadas são: " + [photos.front ? "FRENTE" : null, photos.side ? "PERFIL" : null, photos.back ? "COSTAS" : null].filter(Boolean).join(", ") + ". Analise a composição corporal visível nas fotos." : "\n\n(Nenhuma foto do físico enviada esta semana)") +
+          "\n\nAnalise:\n1. Progressão de cargas e volume vs semana anterior\n2. Relação entre disposição e resultado\n" +
+          (hasPhotos ? "3. Avaliação do físico atual (definição, músculos desenvolvidos, pontos de atenção para atleta natural)\n4. Quais grupos musculares seria mais vantajoso desenvolver agora\n5. " : "3. ") +
+          "2-3 recomendações práticas para a próxima semana\n" + (hasPhotos ? "6." : "4.") + " Frase motivacional final\n\nResponda em português brasileiro.";
+
+        return { systemPrompt, textContent, comparativo, feelingsData };
+      };
+
+      // ── GERA ANÁLISE INICIAL ──
       const generateAIReport = async function() {
-        const apiKey = window.CLAUDE_API_KEY;
-        if (!apiKey || apiKey === "COLOQUE_SUA_CHAVE_AQUI") {
-          setAiError("⚠️ Chave da API não configurada. Edite o index.html e insira sua chave em window.CLAUDE_API_KEY.");
+        const apiUrl = window.CLAUDE_API_KEY;
+        if (!apiUrl || apiUrl === "COLOQUE_SUA_CHAVE_AQUI") {
+          setAiError("⚠️ URL da API não configurada.");
           return;
         }
-
-        setAiLoading(true);
-        setAiError("");
-        setAiReport("");
+        setAiLoading(true); setAiError(""); setAiReport(""); setChatMessages([]);
 
         try {
-          // Separa histórico: semana atual vs anterior
-          const sevenDaysAgo = new Date();
-          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+          const photos = weekPhotos[currentWeekKey] || {};
+          const { systemPrompt, textContent } = buildAIContext(photos);
+          const hasPhotos = photos.front || photos.side || photos.back;
 
-          const recentHistory = history.filter(function(h) {
-            return new Date(h.date + "T00:00:00") >= sevenDaysAgo;
-          });
-          const olderHistory = history.filter(function(h) {
-            return new Date(h.date + "T00:00:00") < sevenDaysAgo;
-          });
+          // Monta content com texto + imagens
+          const userContent = [];
+          if (hasPhotos) {
+            if (photos.front) userContent.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: photos.front } });
+            if (photos.side)  userContent.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: photos.side  } });
+            if (photos.back)  userContent.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: photos.back  } });
+          }
+          userContent.push({ type: "text", text: textContent });
 
-          // Para cada exercício da semana, busca a entrada anterior no histórico mais antigo
-          const comparativo = [];
-          recentHistory.forEach(function(entry) {
-            entry.exercises.forEach(function(ex) {
-              var anterior = null;
-              for (var i = 0; i < olderHistory.length; i++) {
-                var found = olderHistory[i].exercises.find(function(e) { return e.name === ex.name; });
-                if (found) { anterior = { data: olderHistory[i].date, sets: found.sets }; break; }
-              }
-
-              var currVolume    = ex.sets.reduce(function(acc, s) { return acc + (s.reps * s.weight); }, 0);
-              var currMaxKg     = Math.max.apply(null, ex.sets.map(function(s) { return s.weight; }));
-              var currTotalReps = ex.sets.reduce(function(acc, s) { return acc + s.reps; }, 0);
-
-              var item = {
-                exercicio: ex.name,
-                dia: entry.day,
-                data: entry.date,
-                series_esta_semana: ex.sets.map(function(s, i) { return "S" + (i+1) + ": " + s.reps + "rep x " + s.weight + "kg"; }),
-                volume_total_kg: currVolume,
-                carga_maxima_kg: currMaxKg,
-                total_repeticoes: currTotalReps
-              };
-
-              if (anterior) {
-                var prevVolume    = anterior.sets.reduce(function(acc, s) { return acc + (s.reps * s.weight); }, 0);
-                var prevMaxKg     = Math.max.apply(null, anterior.sets.map(function(s) { return s.weight; }));
-                var prevTotalReps = anterior.sets.reduce(function(acc, s) { return acc + s.reps; }, 0);
-                item.ultima_vez           = anterior.data;
-                item.series_anterior      = anterior.sets.map(function(s, i) { return "S" + (i+1) + ": " + s.reps + "rep x " + s.weight + "kg"; });
-                item.variacao_carga_kg    = currMaxKg - prevMaxKg;
-                item.variacao_volume_kg   = currVolume - prevVolume;
-                item.variacao_repeticoes  = currTotalReps - prevTotalReps;
-                item.status = currMaxKg > prevMaxKg ? "PROGREDIU CARGA" :
-                              currMaxKg < prevMaxKg ? "REGREDIU CARGA" :
-                              currVolume > prevVolume ? "MAIS VOLUME (mesma carga)" :
-                              currVolume < prevVolume ? "MENOS VOLUME" : "IGUAL";
-              } else {
-                item.status = "PRIMEIRO REGISTRO";
-              }
-
-              comparativo.push(item);
-            });
-          });
-
-          // Sentimentos da semana
-          const feelingsData = [];
-          Object.keys(feelings).forEach(function(date) {
-            const d = new Date(date + "T00:00:00");
-            if (d >= sevenDaysAgo) {
-              const energyOpt = ENERGY_OPTIONS.find(function(e) { return e.value === feelings[date].energy; });
-              const resultOpt = RESULT_OPTIONS.find(function(r) { return r.value === feelings[date].result; });
-              feelingsData.push({
-                data: date,
-                disposicao: energyOpt ? energyOpt.emoji + " " + energyOpt.label : "não registrado",
-                resultado:  resultOpt ? resultOpt.emoji + " " + resultOpt.label : "não registrado"
-              });
-            }
-          });
-
-          const prompt = "Você é um personal trainer experiente analisando os dados de treino da semana do atleta. Seja direto, motivador e técnico. Use linguagem informal mas profissional. Máximo 400 palavras.\n\n" +
-            "COMPARATIVO DE EXERCÍCIOS (esta semana vs semana anterior):\n" +
-            JSON.stringify(comparativo, null, 2) +
-            "\n\nDISPOSIÇÃO E RESULTADO DOS TREINOS DA SEMANA:\n" +
-            JSON.stringify(feelingsData, null, 2) +
-            "\n\nAnalise:\n" +
-            "1. Quais exercícios progrediram em carga ou volume vs semana anterior (use os campos variacao_carga_kg e variacao_volume_kg)\n" +
-            "2. Quais estagnaram ou regrediram e possível motivo\n" +
-            "3. Relação entre disposição inicial e resultado final\n" +
-            "4. 2-3 recomendações práticas para a próxima semana\n" +
-            "5. Uma frase motivacional no final\n\n" +
-            "Responda em português brasileiro. Não invente dados que não estejam nos campos acima.";
-
-          const response = await fetch(apiKey + "/analyze", {
+          const response = await fetch(apiUrl + "analyze", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt: prompt })
+            body: JSON.stringify({
+              system: systemPrompt,
+              messages: [{ role: "user", content: userContent }]
+            })
           });
 
           if (!response.ok) {
@@ -367,23 +391,75 @@
           const data = await response.json();
           const text = data.content && data.content[0] ? data.content[0].text : "Sem resposta.";
           setAiReport(text);
+
+          // Inicia histórico do chat com a análise como primeira mensagem do assistente
+          setChatMessages([{ role: "assistant", content: text }]);
         } catch(e) {
           setAiError("❌ Erro: " + e.message);
         }
         setAiLoading(false);
       };
 
-      const dayExercises = workouts[activeDay] || [];
-      const currentDay = DAYS.find(function(d) { return d.key === activeDay; });
-      const todayKey = getTodayKey();
-      const todayFeelingData = feelings[todayISO()] || {};
+      // ── CHAT COM A IA ──
+      const sendChatMessage = async function() {
+        const msg = chatInput.trim();
+        if (!msg || chatLoading) return;
+        const apiUrl = window.CLAUDE_API_KEY;
 
-      const openAdd = function() { setEditId(null); setExerciseName(""); setSets([{ reps: "", weight: "" }]); setModal("add"); };
+        const newMessages = [...chatMessages, { role: "user", content: msg }];
+        setChatMessages(newMessages);
+        setChatInput("");
+        setChatLoading(true);
+
+        try {
+          const photos = weekPhotos[currentWeekKey] || {};
+          const { systemPrompt, textContent } = buildAIContext(photos);
+          const hasPhotos = photos.front || photos.side || photos.back;
+
+          // Reconstrói histórico completo para a API
+          // Primeira mensagem do usuário inclui os dados + fotos
+          const firstUserContent = [];
+          if (hasPhotos) {
+            if (photos.front) firstUserContent.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: photos.front } });
+            if (photos.side)  firstUserContent.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: photos.side  } });
+            if (photos.back)  firstUserContent.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: photos.back  } });
+          }
+          firstUserContent.push({ type: "text", text: textContent });
+
+          // Monta mensagens para API: [user_com_dados, assistant_analise, ...chat_history]
+          const apiMessages = [
+            { role: "user",      content: firstUserContent },
+            { role: "assistant", content: chatMessages[0] ? chatMessages[0].content : "Entendido, analisei seus dados." },
+            ...newMessages.slice(1).map(function(m) { return { role: m.role, content: m.content }; })
+          ];
+
+          const response = await fetch(apiUrl + "analyze", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ system: systemPrompt, messages: apiMessages })
+          });
+
+          if (!response.ok) throw new Error("Erro na API");
+          const data = await response.json();
+          const text = data.content && data.content[0] ? data.content[0].text : "Sem resposta.";
+          setChatMessages(function(prev) { return [...prev, { role: "assistant", content: text }]; });
+        } catch(e) {
+          setChatMessages(function(prev) { return [...prev, { role: "assistant", content: "❌ Erro ao responder: " + e.message }]; });
+        }
+        setChatLoading(false);
+      };
+
+      const dayExercises = workouts[activeDay] || [];
+      const currentDay   = DAYS.find(function(d) { return d.key === activeDay; });
+      const todayKey     = getTodayKey();
+
+      const openAdd  = function() { setEditId(null); setExerciseName(""); setSets([{ reps: "", weight: "" }]); setModal("add"); };
       const openEdit = function(ex) { setEditId(ex.id); setExerciseName(ex.name); setSets(ex.sets.map(function(s) { return { reps: String(s.reps), weight: String(s.weight) }; })); setModal("edit"); };
       const closeModal = function() { setModal(null); setEditId(null); };
-      const addSet = function() { setSets(function(prev) { return [...prev, { reps: "", weight: "" }]; }); };
+      const addSet    = function() { setSets(function(prev) { return [...prev, { reps: "", weight: "" }]; }); };
       const removeSet = function(i) { if (sets.length > 1) setSets(sets.filter(function(_, idx) { return idx !== i; })); };
       const updateSet = function(i, field, val) { const n = [...sets]; n[i] = { ...n[i], [field]: val }; setSets(n); };
+      const totalSetsForDay = function(key) { return (workouts[key] || []).reduce(function(acc, ex) { return acc + ex.sets.length; }, 0); };
 
       const saveExercise = async function() {
         if (!exerciseName.trim()) return;
@@ -398,20 +474,14 @@
           list.push({ id: String(Date.now()), name: exerciseName.trim(), sets: validSets });
         }
         updated[activeDay] = list;
-        setWorkouts(updated);
-        await saveWorkouts(updated);
-        closeModal();
+        setWorkouts(updated); await saveWorkouts(updated); closeModal();
       };
 
       const confirmDelete = async function(id) {
         const updated = { ...workouts };
         updated[activeDay] = (updated[activeDay] || []).filter(function(e) { return e.id !== id; });
-        setWorkouts(updated);
-        await saveWorkouts(updated);
-        setDeleteConfirm(null);
+        setWorkouts(updated); await saveWorkouts(updated); setDeleteConfirm(null);
       };
-
-      const totalSetsForDay = function(key) { return (workouts[key] || []).reduce(function(acc, ex) { return acc + ex.sets.length; }, 0); };
 
       if (loading) {
         return (
@@ -428,20 +498,86 @@
         history.forEach(function(h) { if (!grouped[h.date]) grouped[h.date] = []; grouped[h.date].push(h); });
         const dates = Object.keys(grouped).sort(function(a, b) { return b.localeCompare(a); });
 
+        // Slot de foto
+        const PhotoSlot = function({ slot, label, weekKey }) {
+          const photos = weekPhotos[weekKey] || {};
+          const photo  = photos[slot];
+          const inputRef = useRef(null);
+          const isCurrentWeek = weekKey === currentWeekKey;
+          return (
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
+              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.muted, textTransform: "uppercase", textAlign: "center" }}>{label}</div>
+              {photo ? (
+                <div style={{ position: "relative" }}>
+                  <img src={"data:image/jpeg;base64," + photo} style={{ width: "100%", aspectRatio: "3/4", objectFit: "cover", borderRadius: 8, border: `1px solid ${C.border}`, display: "block" }} />
+                  {isCurrentWeek && (
+                    <button onClick={function() { removePhoto(slot); }} style={{ position: "absolute", top: 4, right: 4, width: 22, height: 22, borderRadius: "50%", background: "rgba(0,0,0,0.7)", border: `1px solid ${C.red}66`, color: C.red, fontSize: 11, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+                  )}
+                </div>
+              ) : (
+                isCurrentWeek ? (
+                  <div onClick={function() { inputRef.current && inputRef.current.click(); }} style={{ width: "100%", aspectRatio: "3/4", borderRadius: 8, border: `2px dashed ${C.border}`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, cursor: "pointer", background: "#111" }}>
+                    <span style={{ fontSize: 22 }}>📷</span>
+                    <span style={{ fontSize: 9, color: C.muted, fontWeight: 700, letterSpacing: 1 }}>ADICIONAR</span>
+                    <input ref={inputRef} type="file" accept="image/*" capture="user" style={{ display: "none" }} onChange={function(e) { if (e.target.files[0]) handlePhotoUpload(slot, e.target.files[0]); }} />
+                  </div>
+                ) : (
+                  <div style={{ width: "100%", aspectRatio: "3/4", borderRadius: 8, border: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "center", background: "#0d0d0d" }}>
+                    <span style={{ fontSize: 18, opacity: 0.3 }}>—</span>
+                  </div>
+                )
+              )}
+            </div>
+          );
+        };
+
+        // Agrupa por semana para fotos
+        const weekKeys = Object.keys(weekPhotos).sort(function(a, b) { return b.localeCompare(a); });
+        // Garante semana atual aparece mesmo sem foto
+        if (!weekKeys.includes(currentWeekKey)) weekKeys.unshift(currentWeekKey);
+
         return (
           <div>
             <style>{`@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@400;500;600;700&display=swap'); * { box-sizing: border-box; } body { margin: 0; background: #0c0c0c; overflow-y: auto; }`}</style>
             <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "'Barlow', sans-serif", maxWidth: 480, margin: "0 auto" }}>
+
+              {/* HEADER HISTÓRICO */}
               <div style={{ padding: "22px 20px 16px", background: C.surface, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, zIndex: 10 }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <div style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 40, letterSpacing: 4, color: C.accent, lineHeight: 1 }}>HISTÓRICO</div>
                   <div style={{ display: "flex", gap: 8 }}>
-                    <button onClick={function() { setAiReport(""); setAiError(""); setModal("ai"); }} style={{ background: C.purpleDim, border: `1px solid ${C.purple}44`, color: C.purple, borderRadius: 8, padding: "8px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow', sans-serif", letterSpacing: 1 }}>🤖 IA</button>
+                    <button onClick={function() { setAiReport(""); setAiError(""); setChatMessages([]); setModal("ai"); }} style={{ background: C.purpleDim, border: `1px solid ${C.purple}44`, color: C.purple, borderRadius: 8, padding: "8px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow', sans-serif", letterSpacing: 1 }}>🤖 IA</button>
                     <button onClick={function() { setView("treino"); }} style={{ background: C.accentDim, border: `1px solid ${C.accent}44`, color: C.accentText, borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow', sans-serif", letterSpacing: 1 }}>← TREINO</button>
                   </div>
                 </div>
               </div>
+
               <div style={{ padding: "16px", paddingBottom: 40 }}>
+
+                {/* FOTOS SEMANAIS */}
+                <div style={{ marginBottom: 28 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: C.accentText, textTransform: "uppercase", marginBottom: 12 }}>📸 FOTOS DO FÍSICO</div>
+                  {weekKeys.slice(0, 4).map(function(wk) {
+                    const isCurrentWeek = wk === currentWeekKey;
+                    return (
+                      <div key={wk} style={{ marginBottom: 16 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, color: isCurrentWeek ? C.accent : C.muted2, textTransform: "uppercase", marginBottom: 8 }}>
+                          {isCurrentWeek ? "✦ SEMANA ATUAL" : wk}
+                        </div>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <PhotoSlot slot="front" label="Frente" weekKey={wk} />
+                          <PhotoSlot slot="side"  label="Perfil" weekKey={wk} />
+                          <PhotoSlot slot="back"  label="Costas" weekKey={wk} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* DIVISOR */}
+                <div style={{ height: 1, background: C.border, marginBottom: 24 }} />
+
+                {/* TREINOS */}
                 {dates.length === 0 && (
                   <div style={{ textAlign: "center", padding: "60px 20px", color: C.muted }}>
                     <div style={{ fontSize: 48, marginBottom: 14 }}>📋</div>
@@ -473,16 +609,17 @@
                               <span style={{ fontSize: 11, color: C.muted, marginLeft: 8 }}>{entry.exercises.length} exercício{entry.exercises.length !== 1 ? "s" : ""}</span>
                             </div>
                             {entry.exercises.map(function(ex, xi) {
-                              // Progressão em relação ao treino anterior
-                              const olderHistory = history.filter(function(h) { return h.date < entry.date; });
-                              const prog = getProgression(ex.name, ex.sets, olderHistory);
+                              const olderH = history.filter(function(h) { return h.date < entry.date; });
+                              const prog = getProgression(ex.name, ex.sets, olderH);
                               return (
                                 <div key={xi} style={{ padding: "10px 14px", borderBottom: xi < entry.exercises.length - 1 ? `1px solid ${C.border}` : "none" }}>
                                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                                     <div style={{ fontWeight: 700, fontSize: 14 }}>{ex.name}</div>
-                                    {prog && prog.type === "up" && <span style={{ fontSize: 11, color: C.accent, fontWeight: 700 }}>↑ +{prog.diff}kg</span>}
-                                    {prog && prog.type === "down" && <span style={{ fontSize: 11, color: C.red, fontWeight: 700 }}>↓ -{prog.diff}kg</span>}
-                                    {prog && prog.type === "equal" && <span style={{ fontSize: 11, color: C.muted2 }}>= mesmo peso</span>}
+                                    {prog && prog.type === "up"          && <span style={{ fontSize: 11, color: C.accent, fontWeight: 700 }}>↑ +{prog.diff}kg</span>}
+                                    {prog && prog.type === "down"        && <span style={{ fontSize: 11, color: C.red,    fontWeight: 700 }}>↓ -{prog.diff}kg</span>}
+                                    {prog && prog.type === "volume_up"   && <span style={{ fontSize: 11, color: C.accent }}>↑ +vol</span>}
+                                    {prog && prog.type === "volume_down" && <span style={{ fontSize: 11, color: C.red    }}>↓ -vol</span>}
+                                    {prog && prog.type === "equal"       && <span style={{ fontSize: 11, color: C.muted2 }}>= igual</span>}
                                   </div>
                                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                                     {ex.sets.map(function(s, si) {
@@ -509,47 +646,108 @@
               </div>
             </div>
 
-            {/* MODAL IA */}
+            {/* MODAL IA + CHAT */}
             {modal === "ai" && (
-              <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.92)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
-                <div style={{ background: C.surface, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, padding: "24px 20px 32px", maxHeight: "90vh", overflowY: "auto", border: `1px solid ${C.purple}44`, borderBottom: "none" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
-                    <div style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 26, letterSpacing: 3, color: C.purple }}>🤖 ANÁLISE DA SEMANA</div>
-                    <button onClick={closeModal} style={{ background: "transparent", border: "none", color: C.muted, fontSize: 22, cursor: "pointer" }}>✕</button>
-                  </div>
+              <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.95)", zIndex: 200, display: "flex", flexDirection: "column" }}>
+                <div style={{ background: C.surface, borderBottom: `1px solid ${C.purple}44`, padding: "18px 20px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+                  <div style={{ fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 26, letterSpacing: 3, color: C.purple }}>🤖 ANÁLISE DA SEMANA</div>
+                  <button onClick={closeModal} style={{ background: "transparent", border: "none", color: C.muted, fontSize: 22, cursor: "pointer" }}>✕</button>
+                </div>
+
+                {/* ÁREA DE MENSAGENS */}
+                <div style={{ flex: 1, overflowY: "auto", padding: "16px" }}>
                   {!aiReport && !aiLoading && !aiError && (
-                    <div style={{ textAlign: "center", padding: "20px 0 28px" }}>
-                      <div style={{ fontSize: 48, marginBottom: 12 }}>🧠</div>
-                      <div style={{ fontSize: 14, color: C.muted2, lineHeight: 1.7, marginBottom: 24 }}>A IA vai analisar seus treinos, cargas, progressão e disposição dos últimos 7 dias e te dar um relatório personalizado.</div>
+                    <div style={{ textAlign: "center", padding: "40px 20px" }}>
+                      <div style={{ fontSize: 52, marginBottom: 12 }}>🧠</div>
+                      <div style={{ fontSize: 14, color: C.muted2, lineHeight: 1.7, marginBottom: 8 }}>
+                        A IA vai analisar seus treinos, progressão de cargas e disposição da semana.
+                      </div>
+                      {(currentPhotos.front || currentPhotos.side || currentPhotos.back) ? (
+                        <div style={{ background: C.accentDim, border: `1px solid ${C.accent}33`, borderRadius: 10, padding: "10px 14px", marginBottom: 24, fontSize: 13, color: C.accentText }}>
+                          📸 {[currentPhotos.front ? "Frente" : null, currentPhotos.side ? "Perfil" : null, currentPhotos.back ? "Costas" : null].filter(Boolean).join(", ")} incluídas na análise
+                        </div>
+                      ) : (
+                        <div style={{ background: "#1a1a1a", border: `1px solid ${C.border}`, borderRadius: 10, padding: "10px 14px", marginBottom: 24, fontSize: 12, color: C.muted }}>
+                          Sem fotos esta semana — adicione no histórico para análise visual
+                        </div>
+                      )}
                       <button onClick={generateAIReport} style={{ width: "100%", background: C.purple, color: "#fff", border: "none", borderRadius: 13, padding: "16px", fontSize: 15, fontWeight: 800, letterSpacing: 1.5, cursor: "pointer", fontFamily: "'Barlow', sans-serif" }}>GERAR ANÁLISE</button>
                     </div>
                   )}
                   {aiLoading && (
-                    <div style={{ textAlign: "center", padding: "40px 0" }}>
+                    <div style={{ textAlign: "center", padding: "60px 20px" }}>
                       <div style={{ fontSize: 40, marginBottom: 16 }}>⏳</div>
-                      <div style={{ color: C.purple, fontWeight: 700, letterSpacing: 1 }}>ANALISANDO SEUS DADOS...</div>
+                      <div style={{ color: C.purple, fontWeight: 700, letterSpacing: 1 }}>ANALISANDO SEUS DADOS{(currentPhotos.front || currentPhotos.side || currentPhotos.back) ? " E FOTOS" : ""}...</div>
                     </div>
                   )}
                   {aiError && (
-                    <div>
+                    <div style={{ padding: "16px 0" }}>
                       <div style={{ background: C.redDim, border: `1px solid ${C.red}44`, borderRadius: 12, padding: "14px 16px", marginBottom: 16, fontSize: 13, color: C.red, lineHeight: 1.6 }}>{aiError}</div>
                       <button onClick={generateAIReport} style={{ width: "100%", background: C.purple, color: "#fff", border: "none", borderRadius: 13, padding: "14px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "'Barlow', sans-serif" }}>TENTAR NOVAMENTE</button>
                     </div>
                   )}
-                  {aiReport && (
-                    <div>
-                      <div style={{ background: "#111", border: `1px solid ${C.purple}33`, borderRadius: 14, padding: "16px", fontSize: 14, color: C.text, lineHeight: 1.8, whiteSpace: "pre-wrap", marginBottom: 16 }}>{aiReport}</div>
-                      <button onClick={generateAIReport} style={{ width: "100%", background: "transparent", border: `1px solid ${C.purple}55`, color: C.purple, borderRadius: 13, padding: "13px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow', sans-serif", marginBottom: 10 }}>🔄 GERAR NOVA ANÁLISE</button>
-                      <button onClick={function() {
-                        if (navigator.share) {
-                          navigator.share({ title: "GYM LOG – Análise da Semana", text: aiReport });
-                        } else {
-                          navigator.clipboard.writeText(aiReport).then(function() { alert("Copiado!"); });
-                        }
-                      }} style={{ width: "100%", background: C.accentDim, border: `1px solid ${C.accent}44`, color: C.accentText, borderRadius: 13, padding: "13px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow', sans-serif" }}>📤 COMPARTILHAR / COPIAR</button>
+
+                  {/* MENSAGENS DO CHAT */}
+                  {chatMessages.map(function(msg, i) {
+                    const isAI = msg.role === "assistant";
+                    return (
+                      <div key={i} style={{ marginBottom: 16, display: "flex", flexDirection: "column", alignItems: isAI ? "flex-start" : "flex-end" }}>
+                        {isAI && i === 0 && (
+                          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.purple, marginBottom: 6, textTransform: "uppercase" }}>🤖 Análise do PT</div>
+                        )}
+                        {!isAI && (
+                          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.muted2, marginBottom: 6, textTransform: "uppercase" }}>Você</div>
+                        )}
+                        <div style={{
+                          background: isAI ? "#111" : C.accentDim,
+                          border: `1px solid ${isAI ? C.purple + "33" : C.accent + "44"}`,
+                          borderRadius: isAI ? "4px 14px 14px 14px" : "14px 4px 14px 14px",
+                          padding: "12px 14px",
+                          fontSize: 14,
+                          color: isAI ? C.text : C.accentText,
+                          lineHeight: 1.75,
+                          whiteSpace: "pre-wrap",
+                          maxWidth: "90%"
+                        }}>{msg.content}</div>
+                      </div>
+                    );
+                  })}
+
+                  {chatLoading && (
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 16 }}>
+                      <div style={{ background: "#111", border: `1px solid ${C.purple}33`, borderRadius: "4px 14px 14px 14px", padding: "12px 16px", fontSize: 14, color: C.muted }}>
+                        <span style={{ animation: "pulse 1s infinite" }}>● ● ●</span>
+                      </div>
                     </div>
                   )}
+                  <div ref={chatEndRef} />
                 </div>
+
+                {/* INPUT DO CHAT — só aparece após análise */}
+                {aiReport && (
+                  <div style={{ padding: "12px 16px 24px", background: C.surface, borderTop: `1px solid ${C.border}`, flexShrink: 0 }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+                      <div style={{ flex: 1, background: "#111", border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 14px", display: "flex", alignItems: "center" }}>
+                        <textarea
+                          value={chatInput}
+                          onChange={function(e) { setChatInput(e.target.value); }}
+                          onKeyDown={function(e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChatMessage(); } }}
+                          placeholder="Pergunte algo sobre sua análise..."
+                          rows={1}
+                          style={{ width: "100%", background: "transparent", border: "none", color: C.text, fontSize: 14, outline: "none", resize: "none", fontFamily: "'Barlow', sans-serif", lineHeight: 1.4 }}
+                        />
+                      </div>
+                      <button onClick={sendChatMessage} disabled={!chatInput.trim() || chatLoading} style={{ width: 44, height: 44, borderRadius: 12, background: chatInput.trim() && !chatLoading ? C.accent : "#2a2a2a", border: "none", color: chatInput.trim() && !chatLoading ? "#000" : C.muted, fontSize: 18, cursor: chatInput.trim() && !chatLoading ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>↑</button>
+                    </div>
+                    <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {["Qual músculo focar?", "Como melhorar definição?", "Meu treino está bom?"].map(function(q) {
+                        return (
+                          <button key={q} onClick={function() { setChatInput(q); }} style={{ background: C.purpleDim, border: `1px solid ${C.purple}33`, color: C.purple, borderRadius: 20, padding: "5px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "'Barlow', sans-serif" }}>{q}</button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -559,7 +757,17 @@
       // ── VIEW TREINO ──
       return (
         <div>
-          <style>{`@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@400;500;600;700&display=swap'); * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; } body { margin: 0; background: #0c0c0c; overflow-y: auto; } ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: #161616; } ::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; } input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; } input::placeholder { color: #3a3a3a; }`}</style>
+          <style>{`
+            @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@400;500;600;700&display=swap');
+            * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+            body { margin: 0; background: #0c0c0c; overflow-y: auto; }
+            ::-webkit-scrollbar { width: 4px; }
+            ::-webkit-scrollbar-track { background: #161616; }
+            ::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+            input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; }
+            input::placeholder, textarea::placeholder { color: #3a3a3a; }
+            @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:0.3 } }
+          `}</style>
           <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "'Barlow', sans-serif", maxWidth: 480, margin: "0 auto", position: "relative" }}>
 
             {/* HEADER */}
@@ -574,8 +782,6 @@
                   <button onClick={function() { setView("historico"); }} style={{ background: C.blueDim, border: `1px solid ${C.blue}44`, color: C.blue, borderRadius: 8, padding: "8px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "'Barlow', sans-serif", letterSpacing: 1 }}>📋 HISTÓRICO</button>
                 </div>
               </div>
-
-              {/* BARRA DE DISPOSIÇÃO DO DIA */}
               <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center" }}>
                 <button onClick={function() { setModal("energy"); }} style={{ flex: 1, background: todayEnergy ? C.accentDim : "#1a1a1a", border: `1px solid ${todayEnergy ? C.accent + "55" : C.border}`, borderRadius: 8, padding: "8px 10px", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
                   <span style={{ fontSize: 16 }}>{todayEnergy ? ENERGY_OPTIONS.find(function(e) { return e.value === todayEnergy; }).emoji : "😐"}</span>
@@ -593,9 +799,9 @@
             {/* DAY TABS */}
             <div style={{ display: "flex", background: C.surface, borderBottom: `1px solid ${C.border}`, overflowX: "auto" }}>
               {DAYS.map(function(day) {
-                const active = activeDay === day.key;
+                const active  = activeDay === day.key;
                 const isToday = day.key === todayKey;
-                const count = (workouts[day.key] || []).length;
+                const count   = (workouts[day.key] || []).length;
                 return (
                   <button key={day.key} onClick={function() { setActiveDay(day.key); }} style={{ flex: "0 0 auto", padding: "10px 14px 8px", border: "none", background: "transparent", color: active ? C.accent : C.muted2, fontFamily: "'Bebas Neue', Impact, sans-serif", fontSize: 17, letterSpacing: 2, cursor: "pointer", borderBottom: active ? `3px solid ${C.accent}` : "3px solid transparent", transition: "all 0.15s", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, position: "relative" }}>
                     {day.label}
@@ -614,7 +820,6 @@
                   {dayExercises.length > 0 && <div style={{ fontSize: 12, color: C.muted2, marginTop: 3 }}>{dayExercises.length} exercício{dayExercises.length !== 1 ? "s" : ""} · {totalSetsForDay(activeDay)} séries</div>}
                 </div>
               </div>
-
               {dayExercises.length === 0 && (
                 <div style={{ textAlign: "center", padding: "52px 20px", color: C.muted }}>
                   <div style={{ fontSize: 52, marginBottom: 14 }}>🏋️</div>
@@ -622,7 +827,6 @@
                   <div style={{ fontSize: 13, lineHeight: 1.6 }}>Adicione seus exercícios com as<br />séries, repetições e carga usada.</div>
                 </div>
               )}
-
               {dayExercises.map(function(ex, exIdx) {
                 const prog = getProgression(ex.name, ex.sets, history);
                 return (
@@ -634,9 +838,11 @@
                           <div style={{ fontWeight: 700, fontSize: 15 }}>{ex.name}</div>
                           {prog && (
                             <div style={{ fontSize: 11, marginTop: 1 }}>
-                              {prog.type === "up" && <span style={{ color: C.accent }}>↑ +{prog.diff}kg vs último treino 🏆</span>}
-                              {prog.type === "down" && <span style={{ color: C.red }}>↓ -{prog.diff}kg vs último treino</span>}
-                              {prog.type === "equal" && <span style={{ color: C.muted2 }}>= mesmo peso do último treino</span>}
+                              {prog.type === "up"          && <span style={{ color: C.accent }}>↑ +{prog.diff}kg vs último treino 🏆</span>}
+                              {prog.type === "down"        && <span style={{ color: C.red   }}>↓ -{prog.diff}kg vs último treino</span>}
+                              {prog.type === "volume_up"   && <span style={{ color: C.accent }}>↑ mais volume vs último treino</span>}
+                              {prog.type === "volume_down" && <span style={{ color: C.red   }}>↓ menos volume vs último treino</span>}
+                              {prog.type === "equal"       && <span style={{ color: C.muted2 }}>= mesmo peso do último treino</span>}
                             </div>
                           )}
                         </div>
@@ -692,7 +898,7 @@
               </div>
             )}
 
-            {/* MODAL ADD/EDIT EXERCÍCIO */}
+            {/* MODAL ADD/EDIT */}
             {(modal === "add" || modal === "edit") && (
               <div onClick={function(e) { if (e.target === e.currentTarget) closeModal(); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
                 <div style={{ background: C.surface, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, padding: "24px 20px 32px", maxHeight: "90vh", overflowY: "auto", border: `1px solid ${C.border}`, borderBottom: "none" }}>
@@ -730,7 +936,7 @@
               </div>
             )}
 
-            {/* MODAL DISPOSIÇÃO INICIAL */}
+            {/* MODAL DISPOSIÇÃO */}
             {(modal === "energy" || modal === "energy_then_result") && (
               <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
                 <div style={{ background: C.surface, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, padding: "24px 20px 32px", border: `1px solid ${C.border}`, borderBottom: "none" }}>
@@ -754,7 +960,7 @@
               </div>
             )}
 
-            {/* MODAL RESULTADO FINAL */}
+            {/* MODAL RESULTADO */}
             {modal === "result" && (
               <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
                 <div style={{ background: C.surface, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, padding: "24px 20px 32px", border: `1px solid ${C.border}`, borderBottom: "none" }}>
@@ -779,7 +985,6 @@
 
             {/* FLOATING TIMER */}
             <button onClick={function() { setTimerOpen(function(o) { return !o; }); }} style={{ position: "fixed", bottom: 108, right: 16, zIndex: 300, width: 52, height: 52, borderRadius: "50%", background: timerRunning ? C.accent : C.surface2, border: `2px solid ${timerRunning ? C.accent : C.border}`, color: timerRunning ? "#000" : C.muted2, fontSize: 22, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: timerRunning ? `0 0 20px ${C.accent}55` : "0 4px 16px rgba(0,0,0,0.5)", transition: "all 0.2s" }}>⏱</button>
-
             {timerOpen && (
               <div style={{ position: "fixed", bottom: 170, right: 16, zIndex: 300, background: C.surface, border: `1px solid ${timerRunning ? C.accent + "66" : C.border}`, borderRadius: 18, padding: "18px 20px 16px", boxShadow: "0 8px 32px rgba(0,0,0,0.6)", minWidth: 180, textAlign: "center" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
@@ -795,7 +1000,6 @@
                 </div>
               </div>
             )}
-
           </div>
         </div>
       );
