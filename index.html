@@ -291,6 +291,19 @@
         const {data} = await sb.from("profiles").select("display_name,email,weight,height,avatar").eq("id",userId).single();
         return data;
       },
+      async getMemory(userId) {
+        const {data} = await sb.from("ai_memory")
+          .select("source,summary,created_at")
+          .eq("user_id", userId)
+          .order("created_at", {ascending:false})
+          .limit(12);
+        return data || [];
+      },
+      async saveMemory(userId, source, summary) {
+        const {error} = await sb.from("ai_memory")
+          .insert({user_id:userId, source, summary});
+        if(error) console.error("saveMemory error:", error.message);
+      },
     };
 
     // ── SVG HEXAGON ──
@@ -482,6 +495,291 @@
             {!isLast&&(
               <button onClick={onDone} style={{width:"100%",marginTop:12,background:"transparent",border:"none",color:C.muted,fontSize:13,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",padding:"8px"}}>Pular introdução</button>
             )}
+          </div>
+        </div>
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════
+    //  COACH SCREEN
+    // ════════════════════════════════════════════════════════════
+    function CoachScreen({user, history, feelings, workouts, profile, onBack}) {
+      const [messages,   setMessages]   = useState([]);
+      const [input,      setInput]      = useState("");
+      const [loading,    setLoading]    = useState(false);
+      const [booting,    setBooting]    = useState(true);
+      const [savedAt,    setSavedAt]    = useState(0); // nº de msgs quando salvou pela última vez
+      const chatEndRef   = useRef(null);
+      const messagesRef  = useRef([]);            // ref espelho para acesso sem closure stale
+      const apiUrl       = window.AI_API_URL;
+
+      // Mantém ref sincronizada
+      useEffect(()=>{ messagesRef.current = messages; }, [messages]);
+      useEffect(()=>{ if(chatEndRef.current) chatEndRef.current.scrollIntoView({behavior:"smooth"}); }, [messages]);
+
+      // ── MONTA O SYSTEM PROMPT COM MEMÓRIA E CONTEXTO ──
+      const buildSystem = (memory) => {
+        const name = profile?.display_name || user.email?.split("@")[0] || "atleta";
+        const body = profile?.weight && profile?.height
+          ? `${profile.weight}kg, ${profile.height}cm`
+          : null;
+
+        const planLines = Object.keys(workouts)
+          .filter(d=>(workouts[d]||[]).length>0)
+          .map(d=>`${d.toUpperCase()}: ${workouts[d].map(e=>e.name).join(", ")}`);
+
+        const recentTraining = history.slice(0,8).map(h=>{
+          const maxLoads = h.exercises.map(ex=>{
+            const max = Math.max(...ex.sets.map(s=>s.weight));
+            return `${ex.name} ${max}kg`;
+          }).join(", ");
+          return `${h.date} (${h.day}): ${maxLoads}`;
+        });
+
+        const feelingLines = Object.entries(feelings)
+          .sort((a,b)=>b[0].localeCompare(a[0]))
+          .slice(0,7)
+          .map(([date,f])=>{
+            const e = ENERGY_OPTIONS.find(x=>x.value===f.energy);
+            const r = RESULT_OPTIONS.find(x=>x.value===f.result);
+            return `${date}: ${e?e.label:"?"} / ${r?r.label:"?"}`;
+          });
+
+        const memoryLines = memory.length > 0
+          ? memory.map(m=>`[${m.source.toUpperCase()} · ${(m.created_at||"").slice(0,10)}] ${m.summary}`)
+          : ["Primeira conversa com este atleta."];
+
+        return `Você é o COACH do IRON LOG, personal trainer digital deste atleta.
+Seu estilo: direto, humano, informal. Você conhece o atleta pelo nome e usa o histórico real dele nas respostas.
+Nunca seja genérico. Sempre baseie suas respostas nos dados abaixo.
+Linguagem brasileira natural — como um amigo que entende de treino.
+
+━━ ATLETA ━━
+Nome: ${name}${body?`\nCorporal: ${body}`:""}
+
+━━ PLANO DE TREINO ━━
+${planLines.length ? planLines.join("\n") : "Nenhum exercício cadastrado ainda."}
+
+━━ ÚLTIMOS TREINOS ━━
+${recentTraining.length ? recentTraining.join("\n") : "Sem treinos registrados."}
+
+━━ ENERGIA / RESULTADO RECENTE ━━
+${feelingLines.length ? feelingLines.join("\n") : "Sem registros."}
+
+━━ MEMÓRIA DE CONVERSAS ANTERIORES ━━
+${memoryLines.join("\n")}
+
+━━ INSTRUÇÕES ━━
+- Abra a conversa com uma mensagem curta e pessoal, citando algo específico do histórico acima.
+- Não liste informações — converse.
+- Se perguntarem sobre carga, progressão ou exercício específico, use os dados reais acima.
+- Limite respostas a 3-5 frases salvo quando pedirem explicação técnica detalhada.`;
+      };
+
+      // ── GERA E SALVA RESUMO DA CONVERSA (chamado progressivamente) ──
+      const saveProgressiveSummary = useCallback(async (msgs) => {
+        if(msgs.length < 4) return;            // mínimo de troca real
+        try {
+          const convo = msgs
+            .map(m=>`${m.role==="user"?"Atleta":"Coach"}: ${m.content}`)
+            .join("\n");
+          const res = await fetch(apiUrl+"analyze", {
+            method:"POST", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({
+              system: "Você resume conversas entre um atleta e seu coach de treino. Gere um resumo em português com no máximo 180 palavras focando em: dúvidas levantadas, conselhos dados, ajustes de treino discutidos, estado emocional do atleta. Responda apenas o resumo, sem título nem formatação.",
+              messages:[{role:"user", content:`Resuma:\n\n${convo}`}]
+            })
+          });
+          if(!res.ok) return;
+          const data = await res.json();
+          const summary = (data.content?.[0]?.text||"").trim();
+          if(summary.length > 30) {
+            await db.saveMemory(user.id, "chat", summary);
+          }
+        } catch(e){ console.error("saveProgressiveSummary:", e); }
+      }, [apiUrl, user.id]);
+
+      // ── INIT: busca memória e gera abertura personalizada ──
+      useEffect(()=>{
+        let cancelled = false;
+        (async()=>{
+          setBooting(true);
+          try {
+            const memory = await db.getMemory(user.id);
+            const system = buildSystem(memory);
+            const res = await fetch(apiUrl+"analyze", {
+              method:"POST", headers:{"Content-Type":"application/json"},
+              body: JSON.stringify({
+                system,
+                messages:[{role:"user", content:"oi"}]
+              })
+            });
+            if(cancelled) return;
+            const data = await res.json();
+            const text = (data.content?.[0]?.text||"").trim() || "E aí! Tô aqui. O que rola? 💪";
+            if(!cancelled){
+              const opening = [{role:"assistant", content:text, _sys:system}];
+              setMessages(opening);
+              messagesRef.current = opening;
+            }
+          } catch(e){
+            if(!cancelled){
+              const fallback = [{role:"assistant", content:"E aí! Tô aqui pro que precisar. 💪", _sys:""}];
+              setMessages(fallback);
+              messagesRef.current = fallback;
+            }
+          }
+          if(!cancelled) setBooting(false);
+        })();
+        return ()=>{ cancelled=true; };
+      }, []); // eslint-disable-line
+
+      // ── SALVAR no visibilitychange (best-effort, não é o único trigger) ──
+      useEffect(()=>{
+        const handler = () => {
+          if(document.visibilityState==="hidden") {
+            const msgs = messagesRef.current;
+            if(msgs.length >= 4) saveProgressiveSummary(msgs);
+          }
+        };
+        document.addEventListener("visibilitychange", handler);
+        return ()=>{ document.removeEventListener("visibilitychange", handler); };
+      }, [saveProgressiveSummary]);
+
+      // ── ENVIAR MENSAGEM ──
+      const sendMessage = async () => {
+        const msg = input.trim();
+        if(!msg || loading || booting) return;
+        const system    = messagesRef.current[0]?._sys || "";
+        const newMsgs   = [...messagesRef.current, {role:"user", content:msg}];
+        setMessages(newMsgs);
+        messagesRef.current = newMsgs;
+        setInput("");
+        setLoading(true);
+        try {
+          const apiMsgs = newMsgs.map(m=>({role:m.role, content:m.content}));
+          const res = await fetch(apiUrl+"analyze", {
+            method:"POST", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({system, messages:apiMsgs})
+          });
+          if(!res.ok) throw new Error("API error");
+          const data  = await res.json();
+          const reply = (data.content?.[0]?.text||"").trim() || "Hmm, tenta de novo?";
+          const withReply = [...newMsgs, {role:"assistant", content:reply}];
+          setMessages(withReply);
+          messagesRef.current = withReply;
+
+          // Salva resumo progressivamente a cada 8 mensagens (4 trocas completas)
+          if(withReply.length >= 4 && withReply.length % 8 === 0) {
+            setSavedAt(withReply.length);
+            saveProgressiveSummary(withReply);
+          }
+        } catch(e){
+          const errMsgs = [...newMsgs, {role:"assistant", content:"Deu um erro aqui, tenta de novo. 🔧"}];
+          setMessages(errMsgs);
+          messagesRef.current = errMsgs;
+        }
+        setLoading(false);
+      };
+
+      // ── VOICE INPUT ──
+      const voiceHook = typeof useVoiceInput === "function"
+        ? useVoiceInput((t)=>setInput(prev=>prev.trim()?prev+" "+t:t))
+        : {supported:false, voiceState:"idle", interimText:"", start:()=>{}, stop:()=>{}};
+      const isListening = voiceHook.voiceState==="listening";
+
+      return (
+        <div style={{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:"'Barlow Condensed',sans-serif",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",paddingBottom:72}}>
+          <style>{`
+            @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=Oswald:wght@400;500;600;700&display=swap');
+            *{box-sizing:border-box;} body{margin:0;background:#080a06;}
+            @keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}
+            @keyframes micPulse{0%,100%{box-shadow:0 0 10px ${C.red}44}50%{box-shadow:0 0 22px ${C.red}99}}
+          `}</style>
+
+          {/* HEADER */}
+          <div style={{padding:"18px 16px 14px",background:C.bgCard,borderBottom:`1px solid ${C.border}`,flexShrink:0,position:"sticky",top:0,zIndex:10}}>
+            <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:`linear-gradient(90deg,transparent,${C.accent},transparent)`}} />
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <div style={{width:40,height:40,borderRadius:3,background:"rgba(200,255,62,0.07)",border:`1px solid ${C.accent}44`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>💬</div>
+              <div style={{flex:1}}>
+                <div style={{fontFamily:"'Oswald',sans-serif",fontSize:22,fontWeight:700,color:C.accent,letterSpacing:3,lineHeight:1}}>COACH</div>
+                <div style={{fontSize:9,color:C.muted2,letterSpacing:2,textTransform:"uppercase",marginTop:2}}>Seu personal trainer pessoal</div>
+              </div>
+              <div style={{width:8,height:8,borderRadius:"50%",background:booting?C.muted:C.accent,boxShadow:booting?"none":`0 0 6px ${C.accent}`,animation:booting?"blink 1s infinite":"none"}} />
+            </div>
+          </div>
+
+          {/* CHAT */}
+          <div style={{flex:1,overflowY:"auto",padding:"16px 14px",display:"flex",flexDirection:"column",gap:12}}>
+            {booting && (
+              <div style={{alignSelf:"flex-start",background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:4,padding:"12px 16px",fontSize:14,color:C.muted2,animation:"blink 1.2s infinite"}}>
+                Carregando seu histórico...
+              </div>
+            )}
+            {messages.map((msg,i)=>{
+              const isCoach = msg.role==="assistant";
+              return (
+                <div key={i} style={{display:"flex",flexDirection:"column",alignItems:isCoach?"flex-start":"flex-end",gap:3}}>
+                  {i===0 && isCoach && <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.accentText,textTransform:"uppercase",marginBottom:2}}>💬 COACH</div>}
+                  {!isCoach && i===messages.findIndex(m=>m.role==="user") && <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.muted2,textTransform:"uppercase",marginBottom:2}}>VOCÊ</div>}
+                  <div style={{
+                    background: isCoach ? C.bgCard : C.accentDim,
+                    border:`1px solid ${isCoach?C.border:C.accent+"33"}`,
+                    borderRadius: isCoach?"4px 4px 4px 2px":"4px 4px 2px 4px",
+                    padding:"11px 14px",
+                    fontSize:15,
+                    color: isCoach ? C.text : C.accentText,
+                    lineHeight:1.65,
+                    whiteSpace:"pre-wrap",
+                    maxWidth:"86%",
+                  }}>{msg.content}</div>
+                </div>
+              );
+            })}
+            {loading && (
+              <div style={{alignSelf:"flex-start",background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:4,padding:"12px 16px",color:C.muted,fontSize:15,animation:"blink 0.9s ease-in-out infinite"}}>
+                ● ● ●
+              </div>
+            )}
+            <div ref={chatEndRef} />
+          </div>
+
+          {/* INPUT */}
+          <div style={{padding:"10px 14px 14px",background:C.bgCard,borderTop:`1px solid ${C.border}`,flexShrink:0}}>
+            {isListening && (
+              <div style={{marginBottom:6,padding:"6px 10px",background:"#0a0c08",border:`1px solid ${C.accent}33`,borderRadius:3,fontSize:12,color:C.muted2,fontStyle:"italic"}}>
+                <span style={{color:C.red,marginRight:5}}>●</span>
+                {voiceHook.interimText||"Ouvindo..."}
+              </div>
+            )}
+            <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
+              <div style={{flex:1,background:"#0a0c08",border:`1px solid ${C.border}`,borderRadius:3,padding:"10px 12px"}}>
+                <textarea
+                  value={input}
+                  onChange={e=>setInput(e.target.value)}
+                  onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage();}}}
+                  placeholder={booting?"Carregando...":"Fala comigo..."}
+                  disabled={booting}
+                  rows={1}
+                  style={{width:"100%",background:"transparent",border:"none",color:C.text,fontSize:15,outline:"none",resize:"none",fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.4}}
+                />
+              </div>
+              {voiceHook.supported && (
+                <button
+                  onPointerDown={e=>{e.preventDefault();voiceHook.start();}}
+                  onPointerUp={e=>{e.preventDefault();voiceHook.stop();}}
+                  onPointerLeave={e=>{e.preventDefault();voiceHook.stop();}}
+                  disabled={booting}
+                  style={{width:44,height:44,borderRadius:3,border:"none",background:isListening?C.red:"#1a1a1a",color:isListening?"#fff":C.muted2,fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,userSelect:"none",WebkitUserSelect:"none",touchAction:"none",animation:isListening?"micPulse 0.8s infinite":"none"}}
+                >{isListening?"⏹":"🎙"}</button>
+              )}
+              <button
+                onClick={sendMessage}
+                disabled={!input.trim()||loading||booting}
+                style={{width:44,height:44,borderRadius:3,background:input.trim()&&!loading&&!booting?C.accent:"#1a1a1a",border:"none",color:input.trim()&&!loading&&!booting?"#000":C.muted,fontSize:18,cursor:input.trim()&&!loading&&!booting?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}
+              >↑</button>
+            </div>
           </div>
         </div>
       );
@@ -801,6 +1099,11 @@
           if(!res.ok){const err=await res.json();throw new Error(err.error?.message||"Erro na API");}
           const data=await res.json();const text=data.content&&data.content[0]?data.content[0].text:"Sem resposta.";
           setAiReport(text);setChatMessages([{role:"assistant",content:text}]);
+          // Salva resumo da análise na memória do usuário
+          try {
+            const analysisSummary = text.length > 500 ? text.slice(0, 500)+"…" : text;
+            await db.saveMemory(user.id, "analysis", analysisSummary);
+          } catch(e){}
         }catch(e){setAiError("❌ Erro: "+e.message);}
         setAiLoading(false);
       };
@@ -1659,6 +1962,27 @@
         );
       }
 
+      // ── COACH VIEW ──
+      if(bottomTab==="coach") {
+        return (
+          <>
+            <style>{`@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=Oswald:wght@400;500;600;700&display=swap');`}</style>
+            <CoachScreen
+              user={user}
+              history={history}
+              feelings={feelings}
+              workouts={workouts}
+              profile={profile}
+              onBack={()=>setBottomTab("inicio")}
+            />
+            <BottomNav active={bottomTab} onChange={(tab)=>{setBottomTab(tab);}} onPlusClick={()=>setQuickMenuOpen(true)} />
+          </>
+        );
+      }
+
+      // ── INICIO VIEW ──
+      // Reorder days starting from today
+
       // ── INICIO VIEW ──
       // Reorder days starting from today
       const todayIdx = DAYS.findIndex(d=>d.key===todayKey);
@@ -1762,6 +2086,23 @@
                   );
                 })}
               </div>
+            </div>
+
+            {/* ── COACH CARD ── */}
+            <div
+              onClick={()=>setBottomTab("coach")}
+              style={{marginBottom:12,background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:4,padding:"12px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:12,position:"relative",overflow:"hidden"}}
+            >
+              <div style={{position:"absolute",top:0,left:0,right:0,height:1,background:`linear-gradient(90deg,transparent,${C.accent}44,transparent)`}} />
+              <div style={{width:46,height:46,borderRadius:3,background:"rgba(200,255,62,0.07)",border:`1px solid ${C.accent}33`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:22}}>💬</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+                  <span style={{fontFamily:"'Oswald',sans-serif",fontSize:15,fontWeight:700,color:C.accent,letterSpacing:2}}>COACH</span>
+                  <span style={{background:"rgba(200,255,62,0.08)",border:`1px solid ${C.accent}33`,color:C.accentText,fontSize:9,fontWeight:700,letterSpacing:1,padding:"2px 6px",borderRadius:2}}>IA</span>
+                </div>
+                <div style={{fontSize:12,color:C.muted2,lineHeight:1.4}}>Fala sobre treino, dúvidas, ajustes — seu coach pessoal</div>
+              </div>
+              <div style={{color:C.accent,fontSize:18,opacity:0.6}}>›</div>
             </div>
 
             {/* ── FORGE AI CARD ── */}
@@ -2089,6 +2430,19 @@
             goal: goal || parsed.objetivo || null,
             onboarding_data: parsed
           }, {onConflict:"id"});
+          // Salva resumo do onboarding na memória
+          const onbSummary = [
+            parsed.nome       ? `Nome: ${parsed.nome}`                       : null,
+            parsed.objetivo   ? `Objetivo: ${parsed.objetivo}`               : null,
+            parsed.tempo_treino? `Experiência: ${parsed.tempo_treino}`       : null,
+            parsed.dias_semana ? `Dias/semana: ${parsed.dias_semana}`        : null,
+            parsed.divisao    ? `Divisão preferida: ${parsed.divisao}`       : null,
+          ].filter(Boolean).join(". ");
+          if(onbSummary) {
+            await window._sb.from("ai_memory").insert({
+              user_id: user.id, source:"onboarding", summary: onbSummary
+            });
+          }
         } catch(e){ console.error("Erro ao salvar perfil:", e); }
       };
     
@@ -2325,10 +2679,10 @@
     function BottomNav({active, onChange, onPlusClick}) {
       const tabs = [
         {key:"inicio",    icon:"⚔️", label:"INÍCIO"},
-        {key:"exercicios",icon:"🏋️", label:"EXERCÍCIOS"},
+        {key:"exercicios",icon:"🏋️", label:"TREINO"},
         {key:"novo",      icon:"+",  label:"NOVO", special:true},
         {key:"analises",  icon:"📈", label:"ANÁLISES"},
-        {key:"perfil",    icon:"👤", label:"PERFIL"},
+        {key:"coach",     icon:"💬", label:"COACH"},
       ];
       return (
         <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:C.bgCard,borderTop:`1px solid ${C.border}`,display:"flex",zIndex:50,paddingBottom:"env(safe-area-inset-bottom)"}}>
