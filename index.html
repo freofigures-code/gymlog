@@ -338,10 +338,6 @@
       const [msg,setMsg]=useState("");
       const [showPass,setShowPass]=useState(false);
 
-      useEffect(() => {
-        sb.auth.signOut();
-      }, []);
-
       const handleEmail = async () => {
         setError(""); setMsg(""); setLoading(true);
         try {
@@ -2715,15 +2711,20 @@ ${memoryLines.join("\n")}
       useEffect(()=>{
         // Deixa o onAuthStateChange ser o árbitro principal
         // O INITIAL_SESSION dispara assim que o token do OAuth é processado
-        const {data:{subscription}}=sb.auth.onAuthStateChange((_event,session)=>{
-          if(_event==="INITIAL_SESSION"){
-            setAuthState("auth"); // sempre exige login manual
-          } else if(_event==="SIGNED_IN"){
-            if(session?.user){setUser(session.user);checkOnboarding(session.user,true);}
-          } else if(_event==="SIGNED_OUT"){
-            setUser(null);setAuthState("auth");
+       const {data:{subscription}}=sb.auth.onAuthStateChange((_event,session)=>{
+        if(_event==="INITIAL_SESSION"){
+          if(session?.user){
+            setUser(session.user);
+            checkOnboarding(session.user,false);
+          } else {
+            setAuthState("auth");
           }
-        });
+        } else if(_event==="SIGNED_IN"){
+          if(session?.user){setUser(session.user);checkOnboarding(session.user,true);}
+        } else if(_event==="SIGNED_OUT"){
+          setUser(null);setAuthState("auth");
+        }
+      });
         return()=>subscription.unsubscribe();
       },[]);
       
