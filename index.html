@@ -247,12 +247,17 @@
 
       const handleGoogle = async () => {
         setError("");
-        const {error:e}=await sb.auth.signInWithOAuth({provider:"google",options:{redirectTo:window.location.href}});
+        // Limpa sessão anterior antes de iniciar novo OAuth
+        await sb.auth.signOut();
+        const cleanUrl = window.location.origin + window.location.pathname;
+        const {error:e}=await sb.auth.signInWithOAuth({provider:"google",options:{redirectTo:cleanUrl}});
         if(e)setError(e.message);
       };
       const handleApple = async () => {
         setError("");
-        const {error:e}=await sb.auth.signInWithOAuth({provider:"apple",options:{redirectTo:window.location.href}});
+        await sb.auth.signOut();
+        const cleanUrl = window.location.origin + window.location.pathname;
+        const {error:e}=await sb.auth.signInWithOAuth({provider:"apple",options:{redirectTo:cleanUrl}});
         if(e)setError(e.message);
       };
 
