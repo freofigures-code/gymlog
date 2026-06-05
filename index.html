@@ -251,10 +251,15 @@
 
       const handleGoogle = async () => {
         setError("");
-        // Limpa sessão anterior antes de iniciar novo OAuth
         await sb.auth.signOut();
         const cleanUrl = window.location.origin + window.location.pathname;
-        const {error:e}=await sb.auth.signInWithOAuth({provider:"google",options:{redirectTo:cleanUrl}});
+        const {error:e}=await sb.auth.signInWithOAuth({
+          provider:"google",
+          options:{
+            redirectTo: cleanUrl,
+            queryParams: { prompt: 'select_account' }
+          }
+        });
         if(e)setError(e.message);
       };
       const handleApple = async () => {
@@ -2253,8 +2258,7 @@
         // O INITIAL_SESSION dispara assim que o token do OAuth é processado
         const {data:{subscription}}=sb.auth.onAuthStateChange((_event,session)=>{
           if(_event==="INITIAL_SESSION"){
-            // Ignora sessão antiga — sempre pede login manual
-            setAuthState("auth");
+            setAuthState("auth"); // sempre exige login manual
           } else if(_event==="SIGNED_IN"){
             if(session?.user){setUser(session.user);checkOnboarding(session.user,true);}
           } else if(_event==="SIGNED_OUT"){
