@@ -139,6 +139,109 @@
       reader.readAsDataURL(file);
     }
 
+    // ── VOICE INPUT ──
+    function useVoiceInput(onTranscript) {
+      const [voiceState, setVoiceState] = useState("idle"); // idle | listening
+      const [interimText, setInterimText]   = useState("");
+      const recogRef = useRef(null);
+
+      const SR = (typeof window !== "undefined")
+        ? (window.SpeechRecognition || window.webkitSpeechRecognition || null)
+        : null;
+      const supported = !!SR;
+
+      const start = useCallback(() => {
+        if (!SR) return;
+        // Para qualquer instância anterior
+        if (recogRef.current) {
+          try { recogRef.current.abort(); } catch(e) {}
+          recogRef.current = null;
+        }
+        const r = new SR();
+        r.lang            = "pt-BR";
+        r.continuous      = false;
+        r.interimResults  = true;
+        r.maxAlternatives = 1;
+        recogRef.current  = r;
+
+        r.onstart  = () => { setVoiceState("listening"); setInterimText(""); };
+        r.onresult = (e) => {
+          let interim = "", final_ = "";
+          for (let i = e.resultIndex; i < e.results.length; i++) {
+            const t = e.results[i][0].transcript;
+            if (e.results[i].isFinal) final_ += t;
+            else interim += t;
+          }
+          if (interim) setInterimText(interim);
+          if (final_) {
+            setInterimText("");
+            setVoiceState("idle");
+            recogRef.current = null;
+            onTranscript(final_.trim());
+          }
+        };
+        r.onerror  = ()  => { setVoiceState("idle"); setInterimText(""); recogRef.current = null; };
+        r.onend    = ()  => { setVoiceState("idle"); setInterimText(""); recogRef.current = null; };
+        try { r.start(); } catch(e) { setVoiceState("idle"); }
+      }, [SR, onTranscript]);
+
+      const stop = useCallback(() => {
+        if (recogRef.current) {
+          try { recogRef.current.stop(); } catch(e) {}
+          recogRef.current = null;
+        }
+        setVoiceState("idle");
+        setInterimText("");
+      }, []);
+
+      return { supported, voiceState, interimText, start, stop };
+    }
+
+    // ── VOICE MIC BUTTON ──
+    function VoiceMicButton({ onTranscript }) {
+      const { supported, voiceState, interimText, start, stop } = useVoiceInput(onTranscript);
+      if (!supported) return null;
+      const listening = voiceState === "listening";
+      return (
+        <div style={{ position: "relative", flexShrink: 0 }}>
+          {listening && (
+            <div style={{
+              position:"absolute", bottom:"calc(100% + 6px)", right:0,
+              background:"#0a0c08", border:`1px solid ${C.accent}55`,
+              borderRadius:3, padding:"6px 10px", fontSize:12,
+              color: interimText ? C.text : C.muted2,
+              fontStyle:"italic", whiteSpace:"nowrap", maxWidth:220,
+              overflow:"hidden", textOverflow:"ellipsis",
+              boxShadow:"0 -4px 12px rgba(0,0,0,0.7)",
+              pointerEvents:"none", zIndex:20,
+            }}>
+              <span style={{color:C.red,marginRight:5}}>●</span>
+              {interimText || "Ouvindo..."}
+            </div>
+          )}
+          <button
+            onPointerDown={(e) => { e.preventDefault(); start(); }}
+            onPointerUp={(e)   => { e.preventDefault(); stop();  }}
+            onPointerLeave={(e)=> { e.preventDefault(); stop();  }}
+            style={{
+              width:44, height:44, borderRadius:3, border:"none",
+              background: listening ? C.red : "#1e1e1e",
+              color: listening ? "#fff" : C.muted2,
+              fontSize:20, cursor:"pointer",
+              display:"flex", alignItems:"center", justifyContent:"center",
+              flexShrink:0, userSelect:"none", WebkitUserSelect:"none",
+              touchAction:"none",
+              boxShadow: listening ? `0 0 18px ${C.red}88` : "none",
+              transition:"background 0.15s, box-shadow 0.15s",
+            }}
+          >
+            {listening ? "⏹" : "🎙"}
+          </button>
+          <style>{`@keyframes micPulse{0%,100%{box-shadow:0 0 12px ${C.red}55}50%{box-shadow:0 0 24px ${C.red}bb}}`}</style>
+        </div>
+      );
+    }
+
     // ── SUPABASE HELPERS ──
     const db = {
       async getWorkouts(userId) {
@@ -1182,10 +1285,11 @@
                 </div>
                 {aiReport&&(
                   <div style={{padding:"12px 16px 24px",background:C.bgCard,borderTop:`1px solid ${C.border}`,flexShrink:0}}>
-                    <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
+                    <div style={{display:"flex",gap:8,alignItems:"flex-end",position:"relative"}}>
                       <div style={{flex:1,background:"#0a0c08",border:`1px solid ${C.border}`,borderRadius:3,padding:"10px 14px"}}>
-                        <textarea value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendChatMessage();}}} placeholder="Pergunte algo sobre sua análise..." rows={1} style={{width:"100%",background:"transparent",border:"none",color:C.text,fontSize:14,outline:"none",resize:"none",fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.4}} />
+                        <textarea value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendChatMessage();}}} placeholder="Pergunte algo ou segure 🎙 para falar..." rows={1} style={{width:"100%",background:"transparent",border:"none",color:C.text,fontSize:14,outline:"none",resize:"none",fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.4}} />
                       </div>
+                      <VoiceMicButton onTranscript={(t)=>{ setChatInput(prev => (prev.trim() ? prev+" "+t : t)); }} />
                       <button onClick={sendChatMessage} disabled={!chatInput.trim()||chatLoading} style={{width:44,height:44,borderRadius:3,background:chatInput.trim()&&!chatLoading?C.accent:"#1a1a1a",border:"none",color:chatInput.trim()&&!chatLoading?"#000":C.muted,fontSize:18,cursor:chatInput.trim()&&!chatLoading?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>↑</button>
                     </div>
                   </div>
@@ -2204,10 +2308,11 @@
             ):askingPhoto?(
               <div style={{fontSize:12,color:C.muted,textAlign:"center"}}>Escolha uma opção acima para continuar</div>
             ):(
-              <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
+              <div style={{display:"flex",gap:8,alignItems:"flex-end",position:"relative"}}>
                 <div style={{flex:1,background:"#0a0c08",border:`1px solid ${C.border}`,borderRadius:3,padding:"10px 14px"}}>
-                  <textarea value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage();}}} placeholder="Digite sua resposta..." rows={1} style={{width:"100%",background:"transparent",border:"none",color:C.text,fontSize:15,outline:"none",resize:"none",fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.4}} />
+                  <textarea value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage();}}} placeholder="Digite ou segure 🎙 para falar..." rows={1} style={{width:"100%",background:"transparent",border:"none",color:C.text,fontSize:15,outline:"none",resize:"none",fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.4}} />
                 </div>
+                <VoiceMicButton onTranscript={(t)=>{ setInput(prev => (prev.trim() ? prev+" "+t : t)); }} />
                 <button onClick={sendMessage} disabled={!input.trim()||loading} style={{width:44,height:44,borderRadius:3,background:input.trim()&&!loading?C.accent:"#1a1a1a",border:"none",color:input.trim()&&!loading?"#000":C.muted,fontSize:18,cursor:input.trim()&&!loading?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>↑</button>
               </div>
             )}
