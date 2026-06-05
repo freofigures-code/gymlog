@@ -176,7 +176,7 @@
         await sb.from("week_photos").update({[slot+"_photo"]:null}).eq("user_id",userId).eq("week_key",weekKey);
       },
       async getProfile(userId) {
-        const {data} = await sb.from("profiles").select("display_name,email").eq("id",userId).single();
+        const {data} = await sb.from("profiles").select("display_name,email,weight,height,avatar").eq("id",userId).single();
         return data;
       },
     };
