@@ -2249,8 +2249,34 @@
       const checkOnboarding = async (u, isSignIn=false) => {
         try {
           const flagKey = "ironlog-onboarded-" + u.id;
-          const alreadyOnboarded = localStorage.getItem(flagKey);
-          if (!alreadyOnboarded && isSignIn) {
+      
+          // 1. Flag local existe → já onboardado, vai pro app
+          if (localStorage.getItem(flagKey)) {
+            setAuthState("app");
+            return;
+          }
+      
+          // 2. Consulta o created_at do perfil no Supabase
+          const { data: profile } = await window._sb
+            .from("profiles")
+            .select("created_at")
+            .eq("id", u.id)
+            .single();
+      
+          if (profile?.created_at) {
+            const criadoHa = Date.now() - new Date(profile.created_at).getTime();
+            const cincoMinutos = 5 * 60 * 1000;
+      
+            if (criadoHa > cincoMinutos) {
+              // Perfil tem mais de 5 min → usuário existente
+              localStorage.setItem(flagKey, "1");
+              setAuthState("app");
+              return;
+            }
+          }
+      
+          // 3. Perfil novo ou sem perfil ainda → só manda pro onboarding se for login ativo
+          if (isSignIn) {
             setAuthState("ai_onboarding");
           } else {
             setAuthState("app");
