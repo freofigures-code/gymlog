@@ -1669,6 +1669,148 @@
       );
     }
 
+    // ── AI ONBOARDING ──
+function AIOnboardingScreen({user, onDone}) {
+  const [messages, setMessages] = useState([]);
+  const [input, setInput]       = useState("");
+  const [loading, setLoading]   = useState(false);
+  const [done, setDone]         = useState(false);
+  const chatEndRef = useRef(null);
+
+  const SYSTEM_PROMPT = `Você é a FORGE AI, personal trainer digital do app IRON LOG.
+Seu objetivo é dar as boas vindas ao novo usuário e coletar informações para personalizar a experiência.
+Siga EXATAMENTE este roteiro em ordem, uma pergunta por mensagem:
+
+1. Dê boas vindas calorosas ao IRON LOG, apresente-se brevemente e pergunte o NOME do usuário.
+2. Pergunte há QUANTO TEMPO treina (ex: iniciante, 6 meses, 2 anos, etc).
+3. Pergunte qual o OBJETIVO principal (hipertrofia, emagrecimento, força, condicionamento, saúde geral).
+4. Pergunte quantos DIAS POR SEMANA consegue treinar.
+5. Pergunte se já tem uma DIVISÃO de treino definida (ex: ABC, ABCD, fullbody) ou se precisa de ajuda.
+6. Com base em tudo que coletou, faça um resumo personalizado e motivador do perfil do atleta, explique brevemente como o IRON LOG vai ajudá-lo (registrar treinos, acompanhar progressão de cargas, análise semanal com IA) e encerre com uma frase de incentivo. Termine a mensagem com exatamente o texto: [ONBOARDING_COMPLETO]
+
+Seja direto, motivador e use linguagem informal. Mensagens curtas, máximo 3 linhas cada.
+Não faça mais de uma pergunta por mensagem.
+Não invente informações que o usuário não forneceu.`;
+
+  useEffect(()=>{ startConversation(); },[]);
+  useEffect(()=>{ if(chatEndRef.current)chatEndRef.current.scrollIntoView({behavior:"smooth"}); },[messages]);
+
+  const startConversation = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(window.AI_API_URL+"analyze", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({system:SYSTEM_PROMPT, messages:[{role:"user",content:"iniciar"}]})
+      });
+      const data = await res.json();
+      const text = data.content?.[0]?.text || "Olá! Bem-vindo ao IRON LOG! Qual é o seu nome?";
+      setMessages([{role:"assistant",content:text}]);
+    } catch(e){
+      setMessages([{role:"assistant",content:"Olá! Bem-vindo ao IRON LOG! Qual é o seu nome?"}]);
+    }
+    setLoading(false);
+  };
+
+  const sendMessage = async () => {
+    const msg=input.trim(); if(!msg||loading)return;
+    const newMessages=[...messages,{role:"user",content:msg}];
+    setMessages(newMessages); setInput(""); setLoading(true);
+    try {
+      const res = await fetch(window.AI_API_URL+"analyze", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({system:SYSTEM_PROMPT, messages:newMessages.map(m=>({role:m.role,content:m.content}))})
+      });
+      const data = await res.json();
+      const text = data.content?.[0]?.text || "";
+      if(text.includes("[ONBOARDING_COMPLETO]")){
+        const cleanText=text.replace("[ONBOARDING_COMPLETO]","").trim();
+        setMessages(prev=>[...prev,{role:"assistant",content:cleanText}]);
+        setDone(true);
+        // Extrai e salva os dados coletados
+        try {
+          const extractRes = await fetch(window.AI_API_URL+"analyze", {
+            method:"POST", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({
+              system: "Você extrai dados de uma conversa e responde APENAS com JSON puro, sem texto adicional, sem markdown, sem explicações. Formato exato: {\"nome\":\"...\",\"tempo_treino\":\"...\",\"objetivo\":\"...\",\"dias_semana\":0,\"divisao\":\"...\"}",
+              messages:[{role:"user", content:"Extraia os dados desta conversa:\n\n" + newMessages.map(m=>`${m.role==="user"?"Usuário":"IA"}: ${m.content}`).join("\n")}]
+            })
+          });
+          const extractData = await extractRes.json();
+          const rawText = extractData.content?.[0]?.text || "{}";
+          const clean = rawText.replace(/```json|```/g,"").trim();
+          const parsed = JSON.parse(clean);
+          // Salva no Supabase
+          await sb.from("profiles").upsert({
+            id: user.id,
+            display_name: parsed.nome || null,
+            onboarding_data: parsed
+          }, {onConflict:"id"});
+        } catch(e){ console.error("Erro ao salvar onboarding:", e); }
+      } else {
+        setMessages(prev=>[...prev,{role:"assistant",content:text}]);
+      }
+    } catch(e){
+      setMessages(prev=>[...prev,{role:"assistant",content:"❌ Erro de conexão. Tente novamente."}]);
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{minHeight:"100vh",background:C.bg,display:"flex",flexDirection:"column",fontFamily:"'Barlow Condensed',sans-serif",maxWidth:480,margin:"0 auto"}}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=Oswald:wght@400;500;600;700&display=swap'); *{box-sizing:border-box;} body{margin:0;background:#080a06;} input::placeholder,textarea::placeholder{color:#2d4020;}`}</style>
+
+      {/* HEADER */}
+      <div style={{padding:"20px 16px 14px",background:C.bgCard,borderBottom:`1px solid ${C.border}`,flexShrink:0,position:"relative"}}>
+        <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:`linear-gradient(90deg,transparent,${C.purple},transparent)`}} />
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <div style={{width:40,height:40,borderRadius:3,background:"#1a1230",border:`1px solid ${C.purple}55`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>🤖</div>
+          <div>
+            <div style={{fontFamily:"'Oswald',sans-serif",fontSize:20,fontWeight:700,color:C.accent,letterSpacing:2}}>FORGE AI</div>
+            <div style={{fontSize:10,color:C.muted2,letterSpacing:2,textTransform:"uppercase"}}>Configurando seu perfil</div>
+          </div>
+        </div>
+      </div>
+
+      {/* CHAT */}
+      <div style={{flex:1,overflowY:"auto",padding:"16px",display:"flex",flexDirection:"column",gap:12}}>
+        {messages.map((msg,i)=>{
+          const isAI=msg.role==="assistant";
+          return (
+            <div key={i} style={{display:"flex",flexDirection:"column",alignItems:isAI?"flex-start":"flex-end"}}>
+              {isAI&&<div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.purple,marginBottom:4,textTransform:"uppercase"}}>🤖 FORGE AI</div>}
+              {!isAI&&<div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.muted2,marginBottom:4,textTransform:"uppercase"}}>VOCÊ</div>}
+              <div style={{background:isAI?C.bgCard:C.accentDim,border:`1px solid ${isAI?C.purple+"33":C.accent+"44"}`,borderRadius:4,padding:"12px 14px",fontSize:15,color:isAI?C.text:C.accentText,lineHeight:1.6,maxWidth:"85%",whiteSpace:"pre-wrap"}}>{msg.content}</div>
+            </div>
+          );
+        })}
+        {loading&&(
+          <div style={{display:"flex",flexDirection:"column",alignItems:"flex-start"}}>
+            <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.purple,marginBottom:4,textTransform:"uppercase"}}>🤖 FORGE AI</div>
+            <div style={{background:C.bgCard,border:`1px solid ${C.purple}33`,borderRadius:4,padding:"12px 16px",color:C.muted,fontSize:15}}>● ● ●</div>
+          </div>
+        )}
+        <div ref={chatEndRef} />
+      </div>
+
+      {/* INPUT ou BOTÃO FINAL */}
+      <div style={{padding:"12px 16px 40px",background:C.bgCard,borderTop:`1px solid ${C.border}`,flexShrink:0}}>
+        {done?(
+          <button onClick={onDone} style={{width:"100%",background:C.accent,color:"#000",border:"none",borderRadius:3,padding:"16px",fontSize:15,fontWeight:800,letterSpacing:2,cursor:"pointer",fontFamily:"'Oswald',sans-serif"}}>
+            ⚔️ ENTRAR NO IRON LOG
+          </button>
+        ):(
+          <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
+            <div style={{flex:1,background:"#0a0c08",border:`1px solid ${C.border}`,borderRadius:3,padding:"10px 14px"}}>
+              <textarea value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage();}}} placeholder="Digite sua resposta..." rows={1} style={{width:"100%",background:"transparent",border:"none",color:C.text,fontSize:15,outline:"none",resize:"none",fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.4}} />
+            </div>
+            <button onClick={sendMessage} disabled={!input.trim()||loading} style={{width:44,height:44,borderRadius:3,background:input.trim()&&!loading?C.accent:"#1a1a1a",border:"none",color:input.trim()&&!loading?"#000":C.muted,fontSize:18,cursor:input.trim()&&!loading?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>↑</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
     // ── BOTTOM NAV ──
     function BottomNav({active, onChange}) {
       const tabs = [
@@ -1708,21 +1850,23 @@
 
       useEffect(()=>{
         sb.auth.getSession().then(({data:{session}})=>{
-          if(session?.user){setUser(session.user);checkOnboarding(session.user);}
+          if(session?.user){setUser(session.user);checkOnboarding(session.user,false);}
           else{setAuthState("auth");}
         });
         const {data:{subscription}}=sb.auth.onAuthStateChange((_event,session)=>{
-          if(session?.user){setUser(session.user);if(_event==="SIGNED_IN")checkOnboarding(session.user);}
-          else{setUser(null);setAuthState("auth");}
+          if(session?.user){
+            setUser(session.user);
+            if(_event==="SIGNED_IN")checkOnboarding(session.user,true);
+          }else{setUser(null);setAuthState("auth");}
         });
         return()=>subscription.unsubscribe();
       },[]);
-
-      const checkOnboarding = async (u) => {
+      
+      const checkOnboarding = async (u, isSignIn=false) => {
         try{
           const createdAt=new Date(u.created_at);const now=new Date();
-          const isNewUser=(now-createdAt)<30000;
-          if(isNewUser){setAuthState("onboarding");}else{setAuthState("app");}
+          const isNewUser=(now-createdAt)<120000;
+          if(isNewUser&&isSignIn){setAuthState("ai_onboarding");}else{setAuthState("app");}
         }catch(e){setAuthState("app");}
       };
 
@@ -1733,8 +1877,9 @@
         </div>
       );
       if(authState==="auth")        return <AuthScreen onAuth={u=>{setUser(u);checkOnboarding(u);}} />;
-      if(authState==="onboarding")  return <OnboardingScreen onDone={()=>setAuthState("app")} />;
-      if(authState==="app"&&user)   return <GymLog user={user} onSignOut={()=>{setUser(null);setAuthState("auth");}} />;
+     if(authState==="onboarding")    return <OnboardingScreen onDone={()=>setAuthState("app")} />;
+    if(authState==="ai_onboarding") return <AIOnboardingScreen user={user} onDone={()=>setAuthState("app")} />;
+    if(authState==="app"&&user)     return <GymLog user={user} onSignOut={()=>{setUser(null);setAuthState("auth");}} />;
       return null;
     }
 
