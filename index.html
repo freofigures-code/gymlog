@@ -407,6 +407,7 @@
       const [savingProfile, setSavingProfile] = useState(false);
       const [profileMsg,    setProfileMsg]    = useState("");
       const [avatarInput,   setAvatarInput]   = useState("");
+      const [quickMenuOpen, setQuickMenuOpen] = useState(false);
       const avatarRef = useRef(null);
       const chatEndRef = useRef(null);
 
@@ -610,7 +611,14 @@
 
       const handleAvatarUpload = (file) => {
         if(!file) return;
-        compressImage(file, (base64)=>{ setAvatarInput(base64); });
+        compressImage(file, async (base64) => {
+          setAvatarInput(base64);
+          try {
+            await sb.from("profiles").upsert({
+              id: user.id, avatar: base64
+            }, {onConflict:"id"});
+          } catch(e){ console.error("Erro ao salvar avatar:", e); }
+        });
       };
 
       const handlePhotoUpload = (slot, file) => {
@@ -750,6 +758,247 @@
           <div style={{fontSize:11,letterSpacing:4,color:C.muted2,textTransform:"uppercase"}}>Carregando...</div>
         </div>
       );
+
+      function renderModals() {
+        return (
+          <>
+            {deleteConfirm&&(
+              <div onClick={()=>setDeleteConfirm(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+                <div onClick={e=>e.stopPropagation()} style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:4,padding:24,width:"100%",maxWidth:340,textAlign:"center"}}>
+                  <div style={{fontSize:36,marginBottom:12}}>🗑️</div>
+                  <div style={{fontWeight:700,fontSize:17,marginBottom:8}}>Deletar exercício?</div>
+                  <div style={{fontSize:13,color:C.muted2,marginBottom:24}}>Essa ação não pode ser desfeita.</div>
+                  <div style={{display:"flex",gap:10}}>
+                    <button onClick={()=>setDeleteConfirm(null)} style={{flex:1,background:"transparent",border:`1px solid ${C.border}`,color:C.muted2,borderRadius:3,padding:"12px",fontWeight:600,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif"}}>Cancelar</button>
+                    <button onClick={()=>confirmDelete(deleteConfirm)} style={{flex:1,background:C.red,border:"none",color:"#fff",borderRadius:3,padding:"12px",fontWeight:700,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif"}}>Deletar</button>
+                  </div>
+                </div>
+              </div>
+            )}
+            {(modal==="add"||modal==="edit")&&(
+              <div onClick={e=>{if(e.target===e.currentTarget)closeModal();}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.92)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+                <div style={{background:C.bgCard,borderRadius:"4px 4px 0 0",width:"100%",maxWidth:480,padding:"24px 20px 32px",maxHeight:"90vh",overflowY:"auto",border:`1px solid ${C.border}`,borderBottom:"none",position:"relative"}}>
+                  <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:`linear-gradient(90deg,transparent,${C.accent},transparent)`}} />
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:22}}>
+                    <div style={{fontFamily:"'Oswald',Impact,sans-serif",fontSize:24,letterSpacing:3,color:C.accent,fontWeight:600}}>{modal==="edit"?"EDITAR EXERCÍCIO":"NOVO EXERCÍCIO"}</div>
+                    <button onClick={closeModal} style={{background:"transparent",border:"none",color:C.muted,fontSize:22,cursor:"pointer"}}>✕</button>
+                  </div>
+                  <div style={{marginBottom:20}}>
+                    <label style={{display:"block",fontSize:10,fontWeight:700,letterSpacing:2,color:C.accentText,textTransform:"uppercase",marginBottom:7}}>NOME DO EXERCÍCIO</label>
+                    <input style={{width:"100%",background:"#0a0c08",border:`1px solid ${exerciseName.trim()?C.accent+"55":C.border}`,borderRadius:3,padding:"12px 14px",color:C.text,fontSize:15,outline:"none",fontFamily:"'Barlow Condensed',sans-serif"}} placeholder="Ex: Supino Reto, Agachamento..." value={exerciseName} onChange={e=>setExerciseName(e.target.value)} />
+                  </div>
+                  <div style={{marginBottom:16}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                      <label style={{fontSize:10,fontWeight:700,letterSpacing:2,color:C.accentText,textTransform:"uppercase"}}>SÉRIES</label>
+                      <button onClick={addSet} style={{background:C.accentDim,border:`1px solid ${C.accent}44`,color:C.accentText,borderRadius:2,padding:"5px 12px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif"}}>+ SÉRIE</button>
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"28px 1fr 1fr 28px",gap:8,marginBottom:6,paddingLeft:4}}>
+                      <div/><div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.muted,textTransform:"uppercase",textAlign:"center"}}>REPS</div>
+                      <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.muted,textTransform:"uppercase",textAlign:"center"}}>CARGA (kg)</div><div/>
+                    </div>
+                    {sets.map((set,i)=>(
+                      <div key={i} style={{display:"grid",gridTemplateColumns:"28px 1fr 1fr 28px",gap:8,marginBottom:8,alignItems:"center"}}>
+                        <div style={{fontSize:11,color:C.muted,fontFamily:"monospace",textAlign:"center"}}>S{i+1}</div>
+                        <input type="number" min="0" style={{background:"#0a0c08",border:`1px solid ${C.border}`,borderRadius:3,padding:"11px 12px",color:C.text,fontSize:15,outline:"none",fontFamily:"'Barlow Condensed',sans-serif",textAlign:"center",fontWeight:700,width:"100%"}} placeholder="10" value={set.reps} onChange={e=>updateSet(i,"reps",e.target.value)} />
+                        <input type="number" min="0" style={{background:"#0a0c08",border:`1px solid ${C.border}`,borderRadius:3,padding:"11px 12px",color:C.accent,fontSize:15,outline:"none",fontFamily:"'Oswald',Impact,sans-serif",textAlign:"center",letterSpacing:1,width:"100%",fontWeight:600}} placeholder="60" value={set.weight} onChange={e=>updateSet(i,"weight",e.target.value)} />
+                        <button onClick={()=>removeSet(i)} style={{background:"transparent",border:"none",color:sets.length>1?C.muted:"#2a2a2a",fontSize:16,cursor:sets.length>1?"pointer":"default",padding:0,lineHeight:1}}>✕</button>
+                      </div>
+                    ))}
+                  </div>
+                  <button onClick={saveExercise} style={{width:"100%",background:exerciseName.trim()&&sets.some(s=>s.reps&&s.weight)?C.accent:"#1e2a14",color:exerciseName.trim()&&sets.some(s=>s.reps&&s.weight)?"#000":C.muted,border:"none",borderRadius:3,padding:"16px",fontSize:15,fontWeight:800,letterSpacing:2,cursor:"pointer",marginBottom:10,fontFamily:"'Oswald',sans-serif"}}>SALVAR EXERCÍCIO</button>
+                  <button onClick={closeModal} style={{width:"100%",background:"transparent",color:C.muted,border:`1px solid ${C.border}`,borderRadius:3,padding:"14px",fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif"}}>Cancelar</button>
+                </div>
+              </div>
+            )}
+            {(modal==="energy"||modal==="energy_then_result")&&(
+              <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.92)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+                <div style={{background:C.bgCard,borderRadius:"4px 4px 0 0",width:"100%",maxWidth:480,padding:"24px 20px 32px",border:`1px solid ${C.border}`,borderBottom:"none",position:"relative"}}>
+                  <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:`linear-gradient(90deg,transparent,${C.accent},transparent)`}} />
+                  <div style={{textAlign:"center",marginBottom:20}}>
+                    <div style={{fontFamily:"'Oswald',sans-serif",fontSize:22,letterSpacing:3,color:C.accent,marginBottom:6,fontWeight:600}}>STATUS OPERACIONAL</div>
+                    <div style={{fontSize:12,color:C.muted2}}>Como você chegou hoje?</div>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                    {ENERGY_OPTIONS.map(opt=>(
+                      <button key={opt.value} onClick={()=>{saveEnergy(opt.value);if(modal==="energy_then_result")setTimeout(()=>setModal("result"),100);}} style={{display:"flex",alignItems:"center",gap:14,background:todayEnergy===opt.value?C.accentDim:"#0a0c08",border:`1px solid ${todayEnergy===opt.value?C.accent+"66":C.border}`,borderRadius:3,padding:"13px 16px",cursor:"pointer",textAlign:"left"}}>
+                        <span style={{fontSize:24}}>{opt.emoji}</span>
+                        <span style={{fontWeight:700,fontSize:15,color:C.text,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>{opt.label.toUpperCase()}</span>
+                        {todayEnergy===opt.value&&<span style={{marginLeft:"auto",color:C.accent,fontSize:16}}>✓</span>}
+                      </button>
+                    ))}
+                  </div>
+                  <button onClick={closeModal} style={{width:"100%",background:"transparent",color:C.muted,border:`1px solid ${C.border}`,borderRadius:3,padding:"12px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",marginTop:14}}>Cancelar</button>
+                </div>
+              </div>
+            )}
+            {modal==="result"&&(
+              <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.92)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+                <div style={{background:C.bgCard,borderRadius:"4px 4px 0 0",width:"100%",maxWidth:480,padding:"24px 20px 32px",border:`1px solid ${C.border}`,borderBottom:"none",position:"relative"}}>
+                  <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:`linear-gradient(90deg,transparent,${C.blue},transparent)`}} />
+                  <div style={{textAlign:"center",marginBottom:20}}>
+                    <div style={{fontFamily:"'Oswald',sans-serif",fontSize:22,letterSpacing:3,color:C.blue,marginBottom:6,fontWeight:600}}>RESULTADO DO TREINO</div>
+                    <div style={{fontSize:12,color:C.muted2}}>Como foi sua performance hoje?</div>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                    {RESULT_OPTIONS.map(opt=>(
+                      <button key={opt.value} onClick={()=>saveResult(opt.value)} style={{display:"flex",alignItems:"center",gap:14,background:"#0a0c08",border:`1px solid ${C.border}`,borderRadius:3,padding:"13px 16px",cursor:"pointer",textAlign:"left"}}>
+                        <span style={{fontSize:24}}>{opt.emoji}</span>
+                        <span style={{fontWeight:700,fontSize:15,color:C.text,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>{opt.label.toUpperCase()}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <button onClick={closeModal} style={{width:"100%",background:"transparent",color:C.muted,border:`1px solid ${C.border}`,borderRadius:3,padding:"12px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",marginTop:14}}>Pular</button>
+                </div>
+              </div>
+            )}
+            {/* QUICK MENU BOTTOM SHEET */}
+            {quickMenuOpen&&(
+              <>
+                <div onClick={()=>setQuickMenuOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:400}} />
+                <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:C.bgCard,borderRadius:"12px 12px 0 0",border:`1px solid ${C.border}`,borderBottom:"none",zIndex:401,padding:"8px 16px 40px"}}>
+                  {/* Handle */}
+                  <div style={{width:36,height:4,borderRadius:2,background:C.border,margin:"10px auto 20px"}} />
+            
+                  {/* Label contextual */}
+                  <div style={{fontSize:9,fontWeight:700,letterSpacing:3,color:C.muted2,textTransform:"uppercase",marginBottom:14}}>
+                    {bottomTab==="inicio"?"AÇÕES RÁPIDAS":
+                     bottomTab==="exercicios"?"EXERCÍCIOS":
+                     bottomTab==="analises"?"ANÁLISES":
+                     "AÇÕES"}
+                  </div>
+            
+                  {/* AÇÕES POR ABA */}
+                  {bottomTab==="inicio"&&(
+                    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                      <button onClick={()=>{setQuickMenuOpen(false);setBottomTab("exercicios");openAdd();}} style={{display:"flex",alignItems:"center",gap:14,background:"#0a0c08",border:`1px solid ${C.border}`,borderRadius:3,padding:"14px 16px",cursor:"pointer",textAlign:"left",width:"100%"}}>
+                        <span style={{fontSize:22,width:32,textAlign:"center"}}>🏋️</span>
+                        <div>
+                          <div style={{fontWeight:700,fontSize:14,color:C.text,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>NOVO EXERCÍCIO</div>
+                          <div style={{fontSize:11,color:C.muted2,marginTop:2}}>Adicionar ao treino de hoje</div>
+                        </div>
+                      </button>
+                      <button onClick={()=>{setQuickMenuOpen(false);setBottomTab("exercicios");startWorkout();}} style={{display:"flex",alignItems:"center",gap:14,background:C.accentDim,border:`1px solid ${C.accent}44`,borderRadius:3,padding:"14px 16px",cursor:"pointer",textAlign:"left",width:"100%"}}>
+                        <span style={{fontSize:22,width:32,textAlign:"center"}}>▶</span>
+                        <div>
+                          <div style={{fontWeight:700,fontSize:14,color:C.accentText,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>INICIAR TREINO</div>
+                          <div style={{fontSize:11,color:C.muted,marginTop:2}}>Ativar cronômetro e descanso</div>
+                        </div>
+                      </button>
+                      {(workouts[todayKey]||[]).length>0&&(
+                        <button onClick={()=>{setQuickMenuOpen(false);stopWorkout();finishWorkout();}} style={{display:"flex",alignItems:"center",gap:14,background:"transparent",border:`1px solid ${C.border}`,borderRadius:3,padding:"14px 16px",cursor:"pointer",textAlign:"left",width:"100%"}}>
+                          <span style={{fontSize:22,width:32,textAlign:"center"}}>✅</span>
+                          <div>
+                            <div style={{fontWeight:700,fontSize:14,color:C.text,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>FINALIZAR TREINO</div>
+                            <div style={{fontSize:11,color:C.muted2,marginTop:2}}>Salvar no histórico</div>
+                          </div>
+                        </button>
+                      )}
+                      <button onClick={()=>{setQuickMenuOpen(false);setModal("energy");}} style={{display:"flex",alignItems:"center",gap:14,background:"transparent",border:`1px solid ${C.border}`,borderRadius:3,padding:"14px 16px",cursor:"pointer",textAlign:"left",width:"100%"}}>
+                        <span style={{fontSize:22,width:32,textAlign:"center"}}>⚡</span>
+                        <div>
+                          <div style={{fontWeight:700,fontSize:14,color:C.text,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>STATUS DO DIA</div>
+                          <div style={{fontSize:11,color:C.muted2,marginTop:2}}>Registrar energia de hoje</div>
+                        </div>
+                      </button>
+                    </div>
+                  )}
+            
+                  {bottomTab==="exercicios"&&(
+                    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                      <button onClick={()=>{setQuickMenuOpen(false);openAdd();}} style={{display:"flex",alignItems:"center",gap:14,background:C.accentDim,border:`1px solid ${C.accent}44`,borderRadius:3,padding:"14px 16px",cursor:"pointer",textAlign:"left",width:"100%"}}>
+                        <span style={{fontSize:22,width:32,textAlign:"center"}}>➕</span>
+                        <div>
+                          <div style={{fontWeight:700,fontSize:14,color:C.accentText,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>NOVO EXERCÍCIO</div>
+                          <div style={{fontSize:11,color:C.muted,marginTop:2}}>Adicionar ao dia {currentDay.full}</div>
+                        </div>
+                      </button>
+                      {!workoutActive?(
+                        <button onClick={()=>{setQuickMenuOpen(false);startWorkout();}} style={{display:"flex",alignItems:"center",gap:14,background:"#0a0c08",border:`1px solid ${C.border}`,borderRadius:3,padding:"14px 16px",cursor:"pointer",textAlign:"left",width:"100%"}}>
+                          <span style={{fontSize:22,width:32,textAlign:"center"}}>▶</span>
+                          <div>
+                            <div style={{fontWeight:700,fontSize:14,color:C.text,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>INICIAR TREINO</div>
+                            <div style={{fontSize:11,color:C.muted2,marginTop:2}}>Ativar cronômetro e timer de descanso</div>
+                          </div>
+                        </button>
+                      ):(
+                        <button onClick={()=>{setQuickMenuOpen(false);stopWorkout();finishWorkout();}} style={{display:"flex",alignItems:"center",gap:14,background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:3,padding:"14px 16px",cursor:"pointer",textAlign:"left",width:"100%"}}>
+                          <span style={{fontSize:22,width:32,textAlign:"center"}}>■</span>
+                          <div>
+                            <div style={{fontWeight:700,fontSize:14,color:C.red,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>ENCERRAR TREINO</div>
+                            <div style={{fontSize:11,color:C.muted2,marginTop:2}}>Parar cronômetro e salvar</div>
+                          </div>
+                        </button>
+                      )}
+                      {dayExercises.length>0&&(
+                        <button onClick={()=>{setQuickMenuOpen(false);finishWorkout();}} style={{display:"flex",alignItems:"center",gap:14,background:"transparent",border:`1px solid ${C.border}`,borderRadius:3,padding:"14px 16px",cursor:"pointer",textAlign:"left",width:"100%"}}>
+                          <span style={{fontSize:22,width:32,textAlign:"center"}}>✅</span>
+                          <div>
+                            <div style={{fontWeight:700,fontSize:14,color:C.text,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>FINALIZAR TREINO</div>
+                            <div style={{fontSize:11,color:C.muted2,marginTop:2}}>Registrar resultado e salvar histórico</div>
+                          </div>
+                        </button>
+                      )}
+                      {[{label:"30s",val:30},{label:"60s",val:60},{label:"90s",val:90},{label:"2min",val:120}].map(p=>(
+                        <button key={p.val} onClick={()=>{setQuickMenuOpen(false);startRestTimer(p.val);}} style={{display:"flex",alignItems:"center",gap:14,background:"transparent",border:`1px solid ${C.border}`,borderRadius:3,padding:"12px 16px",cursor:"pointer",textAlign:"left",width:"100%"}}>
+                          <span style={{fontSize:22,width:32,textAlign:"center"}}>⏱</span>
+                          <div style={{fontWeight:700,fontSize:14,color:C.text,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>DESCANSO {p.label}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+            
+                  {bottomTab==="analises"&&(
+                    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                      <button onClick={()=>{setQuickMenuOpen(false);setAiReport("");setAiError("");setChatMessages([]);setModal("ai");}} style={{display:"flex",alignItems:"center",gap:14,background:`linear-gradient(135deg,#1a0f2e,#0e110b)`,border:`1px solid ${C.purple}44`,borderRadius:3,padding:"14px 16px",cursor:"pointer",textAlign:"left",width:"100%"}}>
+                        <span style={{fontSize:22,width:32,textAlign:"center"}}>🤖</span>
+                        <div>
+                          <div style={{fontWeight:700,fontSize:14,color:C.purple,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>FORGE AI — ANÁLISE</div>
+                          <div style={{fontSize:11,color:C.muted2,marginTop:2}}>Gerar análise semanal com IA</div>
+                        </div>
+                      </button>
+                      {["front","side","back"].map((slot,i)=>{
+                        const labels=["Frente","Perfil","Costas"];
+                        return (
+                          <button key={slot} onClick={()=>{setQuickMenuOpen(false);setBottomTab("analises");}} style={{display:"flex",alignItems:"center",gap:14,background:"#0a0c08",border:`1px solid ${C.border}`,borderRadius:3,padding:"14px 16px",cursor:"pointer",textAlign:"left",width:"100%"}}>
+                            <span style={{fontSize:22,width:32,textAlign:"center"}}>📷</span>
+                            <div>
+                              <div style={{fontWeight:700,fontSize:14,color:C.text,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>FOTO — {labels[i].toUpperCase()}</div>
+                              <div style={{fontSize:11,color:C.muted2,marginTop:2}}>Adicionar foto da semana</div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+            
+                  {bottomTab==="perfil"&&(
+                    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                      <button onClick={()=>{setQuickMenuOpen(false);setEditingName(true);}} style={{display:"flex",alignItems:"center",gap:14,background:"#0a0c08",border:`1px solid ${C.border}`,borderRadius:3,padding:"14px 16px",cursor:"pointer",textAlign:"left",width:"100%"}}>
+                        <span style={{fontSize:22,width:32,textAlign:"center"}}>✎</span>
+                        <div>
+                          <div style={{fontWeight:700,fontSize:14,color:C.text,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>EDITAR NOME</div>
+                          <div style={{fontSize:11,color:C.muted2,marginTop:2}}>Alterar nome de exibição</div>
+                        </div>
+                      </button>
+                      <button onClick={()=>{setQuickMenuOpen(false);avatarRef.current&&avatarRef.current.click();}} style={{display:"flex",alignItems:"center",gap:14,background:"#0a0c08",border:`1px solid ${C.border}`,borderRadius:3,padding:"14px 16px",cursor:"pointer",textAlign:"left",width:"100%"}}>
+                        <span style={{fontSize:22,width:32,textAlign:"center"}}>📷</span>
+                        <div>
+                          <div style={{fontWeight:700,fontSize:14,color:C.text,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>ALTERAR FOTO</div>
+                          <div style={{fontSize:11,color:C.muted2,marginTop:2}}>Atualizar avatar do perfil</div>
+                        </div>
+                      </button>
+                    </div>
+                  )}
+            
+                  <button onClick={()=>setQuickMenuOpen(false)} style={{width:"100%",marginTop:16,background:"transparent",border:`1px solid ${C.border}`,borderRadius:3,padding:"12px",fontSize:13,fontWeight:700,color:C.muted,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>
+                    CANCELAR
+                  </button>
+                </div>
+              </>
+            )}
+          </>
+        );
+      }
 
       // ── HISTORICO VIEW ──
       if(bottomTab==="analises") {
@@ -922,7 +1171,7 @@
             )}
 
             {/* BOTTOM NAV */}
-            <BottomNav active={bottomTab} onChange={setBottomTab} />
+            <BottomNav active={bottomTab} onChange={(tab)=>{setQuickMenuOpen(false);setMenuOpen(false);setBottomTab(tab);}} onPlusClick={()=>setQuickMenuOpen(true)} />
           </div>
         );
       }
@@ -1093,7 +1342,7 @@
             </div>
       
             {renderModals()}
-            <BottomNav active={bottomTab} onChange={setBottomTab} />
+            <BottomNav active={bottomTab} onChange={(tab)=>{setQuickMenuOpen(false);setMenuOpen(false);setBottomTab(tab);}} onPlusClick={()=>setQuickMenuOpen(true)} />
           </div>
         );
       }
@@ -1278,7 +1527,7 @@
 
             </div>
 
-            <BottomNav active={bottomTab} onChange={setBottomTab} />
+            <BottomNav active={bottomTab} onChange={(tab)=>{setQuickMenuOpen(false);setMenuOpen(false);setBottomTab(tab);}} onPlusClick={()=>setQuickMenuOpen(true)} />
           </div>
         );
       }
@@ -1290,101 +1539,6 @@
       // Use all 7 for timeline
       const allDaysTimeline = ALL_DAYS;
 
-      function renderModals() {
-        return (
-          <>
-            {deleteConfirm&&(
-              <div onClick={()=>setDeleteConfirm(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-                <div onClick={e=>e.stopPropagation()} style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:4,padding:24,width:"100%",maxWidth:340,textAlign:"center"}}>
-                  <div style={{fontSize:36,marginBottom:12}}>🗑️</div>
-                  <div style={{fontWeight:700,fontSize:17,marginBottom:8}}>Deletar exercício?</div>
-                  <div style={{fontSize:13,color:C.muted2,marginBottom:24}}>Essa ação não pode ser desfeita.</div>
-                  <div style={{display:"flex",gap:10}}>
-                    <button onClick={()=>setDeleteConfirm(null)} style={{flex:1,background:"transparent",border:`1px solid ${C.border}`,color:C.muted2,borderRadius:3,padding:"12px",fontWeight:600,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif"}}>Cancelar</button>
-                    <button onClick={()=>confirmDelete(deleteConfirm)} style={{flex:1,background:C.red,border:"none",color:"#fff",borderRadius:3,padding:"12px",fontWeight:700,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif"}}>Deletar</button>
-                  </div>
-                </div>
-              </div>
-            )}
-            {(modal==="add"||modal==="edit")&&(
-              <div onClick={e=>{if(e.target===e.currentTarget)closeModal();}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.92)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
-                <div style={{background:C.bgCard,borderRadius:"4px 4px 0 0",width:"100%",maxWidth:480,padding:"24px 20px 32px",maxHeight:"90vh",overflowY:"auto",border:`1px solid ${C.border}`,borderBottom:"none",position:"relative"}}>
-                  <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:`linear-gradient(90deg,transparent,${C.accent},transparent)`}} />
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:22}}>
-                    <div style={{fontFamily:"'Oswald',Impact,sans-serif",fontSize:24,letterSpacing:3,color:C.accent,fontWeight:600}}>{modal==="edit"?"EDITAR EXERCÍCIO":"NOVO EXERCÍCIO"}</div>
-                    <button onClick={closeModal} style={{background:"transparent",border:"none",color:C.muted,fontSize:22,cursor:"pointer"}}>✕</button>
-                  </div>
-                  <div style={{marginBottom:20}}>
-                    <label style={{display:"block",fontSize:10,fontWeight:700,letterSpacing:2,color:C.accentText,textTransform:"uppercase",marginBottom:7}}>NOME DO EXERCÍCIO</label>
-                    <input style={{width:"100%",background:"#0a0c08",border:`1px solid ${exerciseName.trim()?C.accent+"55":C.border}`,borderRadius:3,padding:"12px 14px",color:C.text,fontSize:15,outline:"none",fontFamily:"'Barlow Condensed',sans-serif"}} placeholder="Ex: Supino Reto, Agachamento..." value={exerciseName} onChange={e=>setExerciseName(e.target.value)} />
-                  </div>
-                  <div style={{marginBottom:16}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-                      <label style={{fontSize:10,fontWeight:700,letterSpacing:2,color:C.accentText,textTransform:"uppercase"}}>SÉRIES</label>
-                      <button onClick={addSet} style={{background:C.accentDim,border:`1px solid ${C.accent}44`,color:C.accentText,borderRadius:2,padding:"5px 12px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif"}}>+ SÉRIE</button>
-                    </div>
-                    <div style={{display:"grid",gridTemplateColumns:"28px 1fr 1fr 28px",gap:8,marginBottom:6,paddingLeft:4}}>
-                      <div/><div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.muted,textTransform:"uppercase",textAlign:"center"}}>REPS</div>
-                      <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.muted,textTransform:"uppercase",textAlign:"center"}}>CARGA (kg)</div><div/>
-                    </div>
-                    {sets.map((set,i)=>(
-                      <div key={i} style={{display:"grid",gridTemplateColumns:"28px 1fr 1fr 28px",gap:8,marginBottom:8,alignItems:"center"}}>
-                        <div style={{fontSize:11,color:C.muted,fontFamily:"monospace",textAlign:"center"}}>S{i+1}</div>
-                        <input type="number" min="0" style={{background:"#0a0c08",border:`1px solid ${C.border}`,borderRadius:3,padding:"11px 12px",color:C.text,fontSize:15,outline:"none",fontFamily:"'Barlow Condensed',sans-serif",textAlign:"center",fontWeight:700,width:"100%"}} placeholder="10" value={set.reps} onChange={e=>updateSet(i,"reps",e.target.value)} />
-                        <input type="number" min="0" style={{background:"#0a0c08",border:`1px solid ${C.border}`,borderRadius:3,padding:"11px 12px",color:C.accent,fontSize:15,outline:"none",fontFamily:"'Oswald',Impact,sans-serif",textAlign:"center",letterSpacing:1,width:"100%",fontWeight:600}} placeholder="60" value={set.weight} onChange={e=>updateSet(i,"weight",e.target.value)} />
-                        <button onClick={()=>removeSet(i)} style={{background:"transparent",border:"none",color:sets.length>1?C.muted:"#2a2a2a",fontSize:16,cursor:sets.length>1?"pointer":"default",padding:0,lineHeight:1}}>✕</button>
-                      </div>
-                    ))}
-                  </div>
-                  <button onClick={saveExercise} style={{width:"100%",background:exerciseName.trim()&&sets.some(s=>s.reps&&s.weight)?C.accent:"#1e2a14",color:exerciseName.trim()&&sets.some(s=>s.reps&&s.weight)?"#000":C.muted,border:"none",borderRadius:3,padding:"16px",fontSize:15,fontWeight:800,letterSpacing:2,cursor:"pointer",marginBottom:10,fontFamily:"'Oswald',sans-serif"}}>SALVAR EXERCÍCIO</button>
-                  <button onClick={closeModal} style={{width:"100%",background:"transparent",color:C.muted,border:`1px solid ${C.border}`,borderRadius:3,padding:"14px",fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif"}}>Cancelar</button>
-                </div>
-              </div>
-            )}
-            {(modal==="energy"||modal==="energy_then_result")&&(
-              <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.92)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
-                <div style={{background:C.bgCard,borderRadius:"4px 4px 0 0",width:"100%",maxWidth:480,padding:"24px 20px 32px",border:`1px solid ${C.border}`,borderBottom:"none",position:"relative"}}>
-                  <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:`linear-gradient(90deg,transparent,${C.accent},transparent)`}} />
-                  <div style={{textAlign:"center",marginBottom:20}}>
-                    <div style={{fontFamily:"'Oswald',sans-serif",fontSize:22,letterSpacing:3,color:C.accent,marginBottom:6,fontWeight:600}}>STATUS OPERACIONAL</div>
-                    <div style={{fontSize:12,color:C.muted2}}>Como você chegou hoje?</div>
-                  </div>
-                  <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                    {ENERGY_OPTIONS.map(opt=>(
-                      <button key={opt.value} onClick={()=>{saveEnergy(opt.value);if(modal==="energy_then_result")setTimeout(()=>setModal("result"),100);}} style={{display:"flex",alignItems:"center",gap:14,background:todayEnergy===opt.value?C.accentDim:"#0a0c08",border:`1px solid ${todayEnergy===opt.value?C.accent+"66":C.border}`,borderRadius:3,padding:"13px 16px",cursor:"pointer",textAlign:"left"}}>
-                        <span style={{fontSize:24}}>{opt.emoji}</span>
-                        <span style={{fontWeight:700,fontSize:15,color:C.text,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>{opt.label.toUpperCase()}</span>
-                        {todayEnergy===opt.value&&<span style={{marginLeft:"auto",color:C.accent,fontSize:16}}>✓</span>}
-                      </button>
-                    ))}
-                  </div>
-                  <button onClick={closeModal} style={{width:"100%",background:"transparent",color:C.muted,border:`1px solid ${C.border}`,borderRadius:3,padding:"12px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",marginTop:14}}>Cancelar</button>
-                </div>
-              </div>
-            )}
-            {modal==="result"&&(
-              <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.92)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
-                <div style={{background:C.bgCard,borderRadius:"4px 4px 0 0",width:"100%",maxWidth:480,padding:"24px 20px 32px",border:`1px solid ${C.border}`,borderBottom:"none",position:"relative"}}>
-                  <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:`linear-gradient(90deg,transparent,${C.blue},transparent)`}} />
-                  <div style={{textAlign:"center",marginBottom:20}}>
-                    <div style={{fontFamily:"'Oswald',sans-serif",fontSize:22,letterSpacing:3,color:C.blue,marginBottom:6,fontWeight:600}}>RESULTADO DO TREINO</div>
-                    <div style={{fontSize:12,color:C.muted2}}>Como foi sua performance hoje?</div>
-                  </div>
-                  <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                    {RESULT_OPTIONS.map(opt=>(
-                      <button key={opt.value} onClick={()=>saveResult(opt.value)} style={{display:"flex",alignItems:"center",gap:14,background:"#0a0c08",border:`1px solid ${C.border}`,borderRadius:3,padding:"13px 16px",cursor:"pointer",textAlign:"left"}}>
-                        <span style={{fontSize:24}}>{opt.emoji}</span>
-                        <span style={{fontWeight:700,fontSize:15,color:C.text,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>{opt.label.toUpperCase()}</span>
-                      </button>
-                    ))}
-                  </div>
-                  <button onClick={closeModal} style={{width:"100%",background:"transparent",color:C.muted,border:`1px solid ${C.border}`,borderRadius:3,padding:"12px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",marginTop:14}}>Pular</button>
-                </div>
-              </div>
-            )}
-          </>
-        );
-      }
 
       // ══════════════════════════════════════
       //  INÍCIO MAIN VIEW
@@ -1661,10 +1815,7 @@
 
 
           {/* BOTTOM NAV */}
-          <BottomNav active={bottomTab} onChange={(tab)=>{
-            if(tab==="novo"){openAdd();return;}
-            setBottomTab(tab);
-          }} />
+         <BottomNav active={bottomTab} onChange={(tab)=>{setQuickMenuOpen(false);setMenuOpen(false);setBottomTab(tab);}} onPlusClick={()=>setQuickMenuOpen(true)} />
         </div>
       );
     }
@@ -1974,20 +2125,20 @@ Formato: {"nome":"...","tempo_treino":"...","objetivo":"...","dias_semana":0,"di
 }
 
     // ── BOTTOM NAV ──
-    function BottomNav({active, onChange}) {
+    function BottomNav({active, onChange, onPlusClick}) {
       const tabs = [
-        {key:"inicio",   icon:"⚔️",  label:"INÍCIO"},
+        {key:"inicio",    icon:"⚔️", label:"INÍCIO"},
         {key:"exercicios",icon:"🏋️", label:"EXERCÍCIOS"},
-        {key:"novo",     icon:"+",   label:"NOVO",    special:true},
-        {key:"analises", icon:"📈",  label:"ANÁLISES"},
-        {key:"perfil",   icon:"👤",  label:"PERFIL"},
+        {key:"novo",      icon:"+",  label:"NOVO", special:true},
+        {key:"analises",  icon:"📈", label:"ANÁLISES"},
+        {key:"perfil",    icon:"👤", label:"PERFIL"},
       ];
       return (
         <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:C.bgCard,borderTop:`1px solid ${C.border}`,display:"flex",zIndex:50,paddingBottom:"env(safe-area-inset-bottom)"}}>
           {tabs.map(tab=>{
             const isActive=active===tab.key;
             if(tab.special) return (
-              <button key={tab.key} onClick={()=>onChange(tab.key)} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"transparent",border:"none",cursor:"pointer",padding:"8px 4px 10px",position:"relative",top:-12}}>
+              <button key={tab.key} onClick={onPlusClick} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"transparent",border:"none",cursor:"pointer",padding:"8px 4px 10px",position:"relative",top:-12}}>
                 <div style={{width:50,height:50,borderRadius:"50%",background:C.accent,border:`3px solid ${C.bg}`,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:`0 0 20px ${C.accent}66`}}>
                   <span style={{fontFamily:"'Oswald',sans-serif",fontSize:26,fontWeight:700,color:"#000",lineHeight:1}}>+</span>
                 </div>
