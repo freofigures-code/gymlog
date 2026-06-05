@@ -1675,25 +1675,63 @@ function AIOnboardingScreen({user, onDone}) {
   const [input, setInput]       = useState("");
   const [loading, setLoading]   = useState(false);
   const [done, setDone]         = useState(false);
+  const [photoBase64, setPhotoBase64] = useState(null);
+  const [askingPhoto, setAskingPhoto] = useState(false);
+  const [photoSent, setPhotoSent]     = useState(false);
   const chatEndRef = useRef(null);
+  const photoRef   = useRef(null);
 
   const SYSTEM_PROMPT = `Você é a FORGE AI, personal trainer digital do app IRON LOG.
 Seu objetivo é dar as boas vindas ao novo usuário e coletar informações para personalizar a experiência.
 Siga EXATAMENTE este roteiro em ordem, uma pergunta por mensagem:
 
 1. Dê boas vindas calorosas ao IRON LOG, apresente-se brevemente e pergunte o NOME do usuário.
-2. Pergunte há QUANTO TEMPO treina (ex: iniciante, 6 meses, 2 anos, etc).
+2. Pergunte há QUANTO TEMPO treina (iniciante, 6 meses, 1 ano, 2 anos, etc).
 3. Pergunte qual o OBJETIVO principal (hipertrofia, emagrecimento, força, condicionamento, saúde geral).
-4. Pergunte quantos DIAS POR SEMANA consegue treinar.
-5. Pergunte se já tem uma DIVISÃO de treino definida (ex: ABC, ABCD, fullbody) ou se precisa de ajuda.
-6. Com base em tudo que coletou, faça um resumo personalizado e motivador do perfil do atleta, explique brevemente como o IRON LOG vai ajudá-lo (registrar treinos, acompanhar progressão de cargas, análise semanal com IA) e encerre com uma frase de incentivo. Termine a mensagem com exatamente o texto: [ONBOARDING_COMPLETO]
+4. Pergunte quantos DIAS POR SEMANA consegue treinar (mínimo 2, máximo 6).
+5. Pergunte se já tem uma DIVISÃO de treino definida (ex: ABC, ABCD, fullbody) ou se quer que você monte um treino personalizado para ele.
 
-Seja direto, motivador e use linguagem informal. Mensagens curtas, máximo 3 linhas cada.
-Não faça mais de uma pergunta por mensagem.
-Não invente informações que o usuário não forneceu.`;
+Se o usuário quiser ajuda para montar o treino:
+- Responda com exatamente: [PRECISA_TREINO]
+- Aguarde — o sistema irá perguntar se ele quer enviar uma foto.
+- Após isso você receberá os dados e deverá montar o treino completo.
+
+Se o usuário JÁ TEM divisão definida:
+- Parabenize, diga que ele pode cadastrar os exercícios na seção EXERCÍCIOS.
+- Faça um resumo motivador do perfil e encerre com: [ONBOARDING_COMPLETO]
+
+REGRAS:
+- Mensagens curtas, máximo 3 linhas.
+- Uma pergunta por mensagem.
+- Linguagem informal e motivadora.
+- Não invente informações.`;
+
+  const TREINO_PROMPT = `Você é um personal trainer experiente com base científica sólida.
+Monte um treino completo e detalhado para o atleta com base nas informações fornecidas.
+Responda APENAS com JSON puro, sem texto adicional, sem markdown, sem explicações.
+
+Formato EXATO (array de dias):
+[
+  {
+    "day_key": "seg",
+    "exercises": [
+      {"name": "Nome do Exercício", "sets": [{"reps": 10, "weight": 0}, {"reps": 10, "weight": 0}]},
+      ...
+    ]
+  },
+  ...
+]
+
+REGRAS:
+- Use apenas os day_keys disponíveis: seg, ter, qua, qui, sex, sab
+- Distribua os dias conforme a quantidade informada pelo usuário
+- Para weight use 0 (usuário vai ajustar depois)
+- Mínimo 4 exercícios por dia, máximo 7
+- Base científica: volume, frequência e divisão adequados ao objetivo e nível
+- Se tiver foto do usuário, use para estimar composição corporal e ajustar o treino`;
 
   useEffect(()=>{ startConversation(); },[]);
-  useEffect(()=>{ if(chatEndRef.current)chatEndRef.current.scrollIntoView({behavior:"smooth"}); },[messages]);
+  useEffect(()=>{ if(chatEndRef.current)chatEndRef.current.scrollIntoView({behavior:"smooth"}); },[messages, askingPhoto]);
 
   const startConversation = async () => {
     setLoading(true);
@@ -1711,10 +1749,77 @@ Não invente informações que o usuário não forneceu.`;
     setLoading(false);
   };
 
+  const saveWorkoutsToSupabase = async (treino) => {
+    for(const dia of treino) {
+      const exercises = dia.exercises.map(ex => ({
+        id: String(Date.now() + Math.random()),
+        name: ex.name,
+        sets: ex.sets.map(s => ({reps: s.reps, weight: s.weight}))
+      }));
+      await sb.from("workouts").upsert({
+        user_id: user.id,
+        day_key: dia.day_key,
+        exercises: exercises
+      }, {onConflict:"user_id,day_key"});
+    }
+  };
+
+  const extractAndSaveProfile = async (allMessages, goal) => {
+    try {
+      const extractRes = await fetch(window.AI_API_URL+"analyze", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          system: `Extraia dados de uma conversa e responda APENAS com JSON puro sem markdown.
+Formato: {"nome":"...","tempo_treino":"...","objetivo":"...","dias_semana":0,"divisao":"..."}`,
+          messages:[{role:"user", content:"Extraia os dados:\n\n"+allMessages.map(m=>`${m.role==="user"?"Usuário":"IA"}: ${m.content}`).join("\n")}]
+        })
+      });
+      const extractData = await extractRes.json();
+      const rawText = extractData.content?.[0]?.text || "{}";
+      const clean = rawText.replace(/```json|```/g,"").trim();
+      const parsed = JSON.parse(clean);
+      await sb.from("profiles").upsert({
+        id: user.id,
+        display_name: parsed.nome || null,
+        goal: goal || parsed.objetivo || null,
+        onboarding_data: parsed
+      }, {onConflict:"id"});
+    } catch(e){ console.error("Erro ao salvar perfil:", e); }
+  };
+
+  const buildTreino = async (allMessages, withPhoto) => {
+    try {
+      const conversaTexto = allMessages.map(m=>`${m.role==="user"?"Usuário":"IA"}: ${m.content}`).join("\n");
+      const userContent = [];
+      if(withPhoto && photoBase64) {
+        userContent.push({type:"image", source:{type:"base64", media_type:"image/jpeg", data:photoBase64}});
+      }
+      userContent.push({type:"text", text:`Monte o treino com base nesta conversa:\n\n${conversaTexto}`});
+
+      const res = await fetch(window.AI_API_URL+"analyze", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({system:TREINO_PROMPT, messages:[{role:"user",content:userContent}]})
+      });
+      const data = await res.json();
+      const rawText = data.content?.[0]?.text || "[]";
+      const clean = rawText.replace(/```json|```/g,"").trim();
+      const treino = JSON.parse(clean);
+      await saveWorkoutsToSupabase(treino);
+      return treino.length;
+    } catch(e){
+      console.error("Erro ao montar treino:", e);
+      return 0;
+    }
+  };
+
   const sendMessage = async () => {
-    const msg=input.trim(); if(!msg||loading)return;
-    const newMessages=[...messages,{role:"user",content:msg}];
-    setMessages(newMessages); setInput(""); setLoading(true);
+    const msg = input.trim();
+    if(!msg || loading) return;
+    const newMessages = [...messages, {role:"user", content:msg}];
+    setMessages(newMessages);
+    setInput("");
+    setLoading(true);
+
     try {
       const res = await fetch(window.AI_API_URL+"analyze", {
         method:"POST", headers:{"Content-Type":"application/json"},
@@ -1722,30 +1827,31 @@ Não invente informações que o usuário não forneceu.`;
       });
       const data = await res.json();
       const text = data.content?.[0]?.text || "";
-      if(text.includes("[ONBOARDING_COMPLETO]")){
-        const cleanText=text.replace("[ONBOARDING_COMPLETO]","").trim();
+
+      if(text.includes("[PRECISA_TREINO]")) {
+        // Extrai objetivo da conversa até aqui
+        const goalMsg = newMessages.find(m=>m.role==="user" && (
+          m.content.toLowerCase().includes("hipertrofia")||
+          m.content.toLowerCase().includes("emagrecimento")||
+          m.content.toLowerCase().includes("força")||
+          m.content.toLowerCase().includes("condicionamento")||
+          m.content.toLowerCase().includes("saúde")
+        ));
+        await extractAndSaveProfile(newMessages, goalMsg?.content || null);
+        setMessages(prev=>[...prev,{role:"assistant",content:"Ótimo! Vou montar um treino personalizado para você. 💪"}]);
+        setAskingPhoto(true);
+      } else if(text.includes("[ONBOARDING_COMPLETO]")) {
+        const cleanText = text.replace("[ONBOARDING_COMPLETO]","").trim();
         setMessages(prev=>[...prev,{role:"assistant",content:cleanText}]);
+        const goalMsg = newMessages.find(m=>m.role==="user" && (
+          m.content.toLowerCase().includes("hipertrofia")||
+          m.content.toLowerCase().includes("emagrecimento")||
+          m.content.toLowerCase().includes("força")||
+          m.content.toLowerCase().includes("condicionamento")||
+          m.content.toLowerCase().includes("saúde")
+        ));
+        await extractAndSaveProfile(newMessages, goalMsg?.content || null);
         setDone(true);
-        // Extrai e salva os dados coletados
-        try {
-          const extractRes = await fetch(window.AI_API_URL+"analyze", {
-            method:"POST", headers:{"Content-Type":"application/json"},
-            body: JSON.stringify({
-              system: "Você extrai dados de uma conversa e responde APENAS com JSON puro, sem texto adicional, sem markdown, sem explicações. Formato exato: {\"nome\":\"...\",\"tempo_treino\":\"...\",\"objetivo\":\"...\",\"dias_semana\":0,\"divisao\":\"...\"}",
-              messages:[{role:"user", content:"Extraia os dados desta conversa:\n\n" + newMessages.map(m=>`${m.role==="user"?"Usuário":"IA"}: ${m.content}`).join("\n")}]
-            })
-          });
-          const extractData = await extractRes.json();
-          const rawText = extractData.content?.[0]?.text || "{}";
-          const clean = rawText.replace(/```json|```/g,"").trim();
-          const parsed = JSON.parse(clean);
-          // Salva no Supabase
-          await sb.from("profiles").upsert({
-            id: user.id,
-            display_name: parsed.nome || null,
-            onboarding_data: parsed
-          }, {onConflict:"id"});
-        } catch(e){ console.error("Erro ao salvar onboarding:", e); }
       } else {
         setMessages(prev=>[...prev,{role:"assistant",content:text}]);
       }
@@ -1753,6 +1859,46 @@ Não invente informações que o usuário não forneceu.`;
       setMessages(prev=>[...prev,{role:"assistant",content:"❌ Erro de conexão. Tente novamente."}]);
     }
     setLoading(false);
+  };
+
+  const handlePhotoChoice = async (sendPhoto) => {
+    setAskingPhoto(false);
+    if(sendPhoto) {
+      photoRef.current && photoRef.current.click();
+    } else {
+      await finalizeTreino(false);
+    }
+  };
+
+  const handlePhotoUpload = (file) => {
+    if(!file) return;
+    compressImage(file, async(base64) => {
+      setPhotoBase64(base64);
+      setPhotoSent(true);
+      await finalizeTreino(true, base64);
+    });
+  };
+
+  const finalizeTreino = async (withPhoto, base64Override) => {
+    setLoading(true);
+    if(base64Override) setPhotoBase64(base64Override);
+    setMessages(prev=>[...prev,{
+      role:"assistant",
+      content: withPhoto
+        ? "Foto recebida! Montando seu treino personalizado... ⚙️"
+        : "Sem problema! Montando seu treino com base nas suas informações... ⚙️"
+    }]);
+
+    const diasCount = await buildTreino(messages, withPhoto);
+
+    setMessages(prev=>[...prev,{
+      role:"assistant",
+      content: diasCount > 0
+        ? `Treino montado com sucesso! 🎉\n\nJá salvei ${diasCount} dias de treino na seção EXERCÍCIOS. Você pode ver, editar e ajustar as cargas por lá.\n\nBem-vindo ao IRON LOG! Vamos forjar seu progresso! ⚔️`
+        : `Treino criado! Acesse a seção EXERCÍCIOS para ver seu plano. Vamos forjar seu progresso! ⚔️`
+    }]);
+    setLoading(false);
+    setDone(true);
   };
 
   return (
@@ -1774,7 +1920,7 @@ Não invente informações que o usuário não forneceu.`;
       {/* CHAT */}
       <div style={{flex:1,overflowY:"auto",padding:"16px",display:"flex",flexDirection:"column",gap:12}}>
         {messages.map((msg,i)=>{
-          const isAI=msg.role==="assistant";
+          const isAI = msg.role==="assistant";
           return (
             <div key={i} style={{display:"flex",flexDirection:"column",alignItems:isAI?"flex-start":"flex-end"}}>
               {isAI&&<div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.purple,marginBottom:4,textTransform:"uppercase"}}>🤖 FORGE AI</div>}
@@ -1783,6 +1929,20 @@ Não invente informações que o usuário não forneceu.`;
             </div>
           );
         })}
+
+        {/* CARD DE FOTO */}
+        {askingPhoto&&(
+          <div style={{background:C.bgCard,border:`1px solid ${C.purple}44`,borderRadius:4,padding:"16px",display:"flex",flexDirection:"column",gap:12}}>
+            <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.purple,textTransform:"uppercase"}}>🤖 FORGE AI</div>
+            <div style={{fontSize:14,color:C.text,lineHeight:1.6}}>Quer enviar uma foto do seu físico? A IA consegue estimar sua composição corporal e montar um treino ainda mais preciso. É opcional! 📷</div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>handlePhotoChoice(true)} style={{flex:1,background:C.accentDim,border:`1px solid ${C.accent}55`,color:C.accentText,borderRadius:3,padding:"12px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif"}}>📷 ENVIAR FOTO</button>
+              <button onClick={()=>handlePhotoChoice(false)} style={{flex:1,background:"transparent",border:`1px solid ${C.border}`,color:C.muted2,borderRadius:3,padding:"12px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif"}}>SEM FOTO</button>
+            </div>
+            <input ref={photoRef} type="file" accept="image/*" capture="user" style={{display:"none"}} onChange={e=>{if(e.target.files[0])handlePhotoUpload(e.target.files[0]);}} />
+          </div>
+        )}
+
         {loading&&(
           <div style={{display:"flex",flexDirection:"column",alignItems:"flex-start"}}>
             <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.purple,marginBottom:4,textTransform:"uppercase"}}>🤖 FORGE AI</div>
@@ -1798,6 +1958,8 @@ Não invente informações que o usuário não forneceu.`;
           <button onClick={onDone} style={{width:"100%",background:C.accent,color:"#000",border:"none",borderRadius:3,padding:"16px",fontSize:15,fontWeight:800,letterSpacing:2,cursor:"pointer",fontFamily:"'Oswald',sans-serif"}}>
             ⚔️ ENTRAR NO IRON LOG
           </button>
+        ):askingPhoto?(
+          <div style={{fontSize:12,color:C.muted,textAlign:"center"}}>Escolha uma opção acima para continuar</div>
         ):(
           <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
             <div style={{flex:1,background:"#0a0c08",border:`1px solid ${C.border}`,borderRadius:3,padding:"10px 14px"}}>
