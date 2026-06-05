@@ -2176,11 +2176,17 @@ Formato: {"nome":"...","tempo_treino":"...","objetivo":"...","dias_semana":0,"di
       },[]);
       
       const checkOnboarding = async (u, isSignIn=false) => {
-        try{
-          const createdAt=new Date(u.created_at);const now=new Date();
-          const isNewUser=(now-createdAt)<120000;
-          if(isNewUser&&isSignIn){setAuthState("ai_onboarding");}else{setAuthState("app");}
-        }catch(e){setAuthState("app");}
+        try {
+          const flagKey = "ironlog-onboarded-" + u.id;
+          const alreadyOnboarded = localStorage.getItem(flagKey);
+          if (!alreadyOnboarded && isSignIn) {
+            setAuthState("ai_onboarding");
+          } else {
+            setAuthState("app");
+          }
+        } catch(e) {
+          setAuthState("app");
+        }
       };
 
       if(authState==="loading") return (
@@ -2189,9 +2195,12 @@ Formato: {"nome":"...","tempo_treino":"...","objetivo":"...","dias_semana":0,"di
           <div style={{fontSize:11,letterSpacing:4,color:C.muted2,textTransform:"uppercase"}}>Carregando...</div>
         </div>
       );
-      if(authState==="auth")        return <AuthScreen onAuth={u=>{setUser(u);checkOnboarding(u);}} />;
+      if(authState==="auth")        return <AuthScreen onAuth={u=>{setUser(u);checkOnboarding(u,true);}} />;
      if(authState==="onboarding")    return <OnboardingScreen onDone={()=>setAuthState("app")} />;
-    if(authState==="ai_onboarding") return <AIOnboardingScreen user={user} onDone={()=>setAuthState("app")} />;
+    if(authState==="ai_onboarding") return <AIOnboardingScreen user={user} onDone={()=>{
+      localStorage.setItem("ironlog-onboarded-" + user.id, "1");
+      setAuthState("app");
+    }} />;
     if(authState==="app"&&user)     return <GymLog user={user} onSignOut={()=>{setUser(null);setAuthState("auth");}} />;
       return null;
     }
