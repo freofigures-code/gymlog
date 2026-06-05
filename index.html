@@ -28,6 +28,15 @@
     window.SUPABASE_URL  = "https://tkarbvqqepolhizcfxbx.supabase.co";
     window.SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRrYXJidnFxZXBvbGhpemNmeGJ4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1MzY1MDYsImV4cCI6MjA5NjExMjUwNn0.d90JLpf1M1EE0vFKsAdTQGZUTrnJKRm49zq_EFbeOwc";
     window.AI_API_URL    = "https://chatwoot-app-academia-api-claude.7t6kue.easypanel.host/";
+    // Corrige o bug do ## do GitHub Pages + Supabase OAuth
+    if (window.location.hash && window.location.hash.startsWith('#')) {
+      const hash = window.location.hash.slice(1);
+      if (hash.startsWith('#')) {
+        // Remove o # duplicado
+        history.replaceState(null, '', window.location.pathname + '#' + hash.slice(1));
+      }
+    }
+    
     window._sb = supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON);
   </script>
 
