@@ -647,7 +647,9 @@
         const feelingsData=[];
         Object.keys(feelings).forEach(date=>{const d=new Date(date+"T00:00:00");if(d>=sevenDaysAgo){const eO=ENERGY_OPTIONS.find(e=>e.value===feelings[date].energy);const rO=RESULT_OPTIONS.find(r=>r.value===feelings[date].result);feelingsData.push({data:date,disposicao:eO?eO.emoji+" "+eO.label:"não registrado",resultado:rO?rO.emoji+" "+rO.label:"não registrado"});}});
         const hasPhotos=photos&&(photos.front||photos.side||photos.back);
-        const bodyData = profile?.weight&&profile?.height ? `\n\nDADOS CORPORAIS:\nPeso: ${profile.weight}kg | Altura: ${profile.height}cm | IMC: ${(profile.weight/Math.pow(profile.height/100,2)).toFixed(1)}` : "\n\nDADOS CORPORAIS: não informados";
+        const bodyData = profile?.weight&&profile?.height ? 
+  `\n\nDADOS CORPORAIS:\nPeso: ${profile.weight}kg | Altura: ${profile.height}cm` 
+  : "\n\nDADOS CORPORAIS: não informados";
         const systemPrompt="Você é um personal trainer experiente e nutricionista esportivo. O atleta é NATURAL. Analise os dados de treino"+(hasPhotos?" e as fotos enviadas":"")+". Seja direto, motivador e técnico. Use linguagem informal mas profissional.";
         const textContent="COMPARATIVO DE EXERCÍCIOS:\n"+JSON.stringify(comparativo,null,2)+"\n\nDISPOSIÇÃO E RESULTADO:\n"+JSON.stringify(feelingsData,null,2)+bodyData+(hasPhotos?"\n\nFOTOS DO FÍSICO: "+[photos.front?"FRENTE":null,photos.side?"PERFIL":null,photos.back?"COSTAS":null].filter(Boolean).join(", "):"\n\n(Sem fotos)")+"\n\nAnalise progressão, disposição"+(profile?.weight&&profile?.height?", dados corporais":"")+", e dê 2-3 recomendações práticas. Responda em português brasileiro.";
         return{systemPrompt,textContent};
@@ -1192,7 +1194,7 @@
                     <span style={{fontSize:24,flexShrink:0}}>🤖</span>
                     <div>
                       <div style={{fontSize:11,fontWeight:700,letterSpacing:2,color:C.accent,textTransform:"uppercase",marginBottom:4}}>FORGE AI PRECISA DE VOCÊ</div>
-                      <div style={{fontSize:13,color:C.muted2,lineHeight:1.6}}>Adicione seu <span style={{color:C.text,fontWeight:700}}>peso</span> e <span style={{color:C.text,fontWeight:700}}>altura</span> abaixo para que a IA consiga analisar seu IMC, composição corporal estimada e personalizar ainda mais as recomendações de treino.</div>
+                      <div style={{fontSize:13,color:C.muted2,lineHeight:1.6}}>Adicione seu <span style={{color:C.text,fontWeight:700}}>peso</span> e <span style={{color:C.text,fontWeight:700}}>altura</span> abaixo para que a IA consiga avaliar suas cargas em relação ao seu biotipo e personalizar ainda mais as recomendações de treino.</div>
                     </div>
                   </div>
                 </div>
@@ -1226,31 +1228,6 @@
                     {profile?.height&&<div style={{fontSize:9,color:C.muted2}}>Atual: {profile.height}cm</div>}
                   </div>
                 </div>
-
-                {/* IMC se tiver os dois */}
-                {weightInput && heightInput && Number(weightInput)>0 && Number(heightInput)>0 && (
-                  <div style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:4,padding:"12px 14px",display:"flex",alignItems:"center",gap:14}}>
-                    {(()=>{
-                      const imc = Number(weightInput) / Math.pow(Number(heightInput)/100, 2);
-                      const cat = imc<18.5?"ABAIXO DO PESO":imc<25?"PESO IDEAL":imc<30?"SOBREPESO":"OBESIDADE";
-                      const col = imc<18.5?C.blue:imc<25?C.accent:imc<30?C.yellow:C.red;
-                      return (
-                        <>
-                          <div>
-                            <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.muted2,textTransform:"uppercase",marginBottom:2}}>IMC ESTIMADO</div>
-                            <div style={{fontFamily:"'Oswald',Impact,sans-serif",fontSize:28,color:col,fontWeight:700,letterSpacing:1,lineHeight:1}}>{imc.toFixed(1)}</div>
-                          </div>
-                          <div style={{flex:1}}>
-                            <div style={{fontSize:11,fontWeight:700,color:col,letterSpacing:1,marginBottom:4}}>{cat}</div>
-                            <div style={{height:4,background:C.border,borderRadius:2,overflow:"hidden"}}>
-                              <div style={{height:"100%",width:`${Math.min(((imc-10)/35)*100,100)}%`,background:col,borderRadius:2,transition:"width 0.5s"}} />
-                            </div>
-                          </div>
-                        </>
-                      );
-                    })()}
-                  </div>
-                )}
 
                 <button onClick={saveProfile} disabled={savingProfile} style={{width:"100%",marginTop:10,background:C.accent,color:"#000",border:"none",borderRadius:3,padding:"14px",fontSize:14,fontWeight:800,letterSpacing:2,cursor:savingProfile?"default":"pointer",fontFamily:"'Oswald',sans-serif",opacity:savingProfile?0.6:1,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
                   {savingProfile?"SALVANDO...":profileMsg||"SALVAR DADOS"}
@@ -1463,8 +1440,11 @@
                     📋 HISTÓRICO
                   </button>
                   <div style={{position:"relative"}}>
-                    <button onClick={()=>setMenuOpen(o=>!o)} style={{width:34,height:34,borderRadius:2,background:C.accentDim,border:`1px solid ${C.accent}55`,color:C.accent,fontSize:14,fontWeight:800,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Oswald',sans-serif",fontWeight:600}}>
-                      {initials}
+                    <button onClick={()=>setMenuOpen(o=>!o)} style={{width:34,height:34,borderRadius:2,background:avatarInput?"transparent":C.accentDim,border:`1px solid ${C.accent}55`,color:C.accent,fontSize:14,fontWeight:800,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Oswald',sans-serif",overflow:"hidden",padding:0}}>
+                      {avatarInput
+                        ? <img src={`data:image/jpeg;base64,${avatarInput}`} style={{width:"100%",height:"100%",objectFit:"cover"}} />
+                        : <span style={{fontWeight:700}}>{initials}</span>
+                      }
                     </button>
                     {menuOpen&&(
                       <div style={{position:"absolute",top:42,right:0,background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:4,padding:"6px 0",minWidth:180,zIndex:200,boxShadow:"0 8px 32px rgba(0,0,0,0.8)"}}>
