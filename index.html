@@ -781,6 +781,317 @@ ${memoryLines.join("\n")}
       );
     }
 
+    // ── FLOATING WORKOUT BALL ──
+    function FloatingWorkoutBall({ workoutSeconds, workoutActive, onStop, onFinish }) {
+      const [mode, setMode]           = useState("stopwatch"); // "stopwatch" | "timer"
+      const [restSeconds, setRestSeconds] = useState(null);
+      const [restTotal,   setRestTotal]   = useState(null);
+      const [restAlarm,   setRestAlarm]   = useState(false);
+      const [expanded,    setExpanded]    = useState(false);
+      const [pos,         setPos]         = useState({ x: 20, y: 120 });
+      const dragging   = useRef(false);
+      const dragOffset = useRef({ x: 0, y: 0 });
+      const moved      = useRef(false);
+      const ballRef    = useRef(null);
+
+      const REST_PRESETS = [
+        { label: "30s",  val: 30  },
+        { label: "1min", val: 60  },
+        { label: "90s",  val: 90  },
+        { label: "2min", val: 120 },
+      ];
+
+      // Timer regressivo
+      useEffect(() => {
+        if (restSeconds === null || restSeconds <= 0) return;
+        const t = setInterval(() => {
+          setRestSeconds(s => {
+            if (s <= 1) {
+              clearInterval(t);
+              try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch(e) {}
+              try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain); gain.connect(ctx.destination);
+                osc.frequency.value = 880; gain.gain.value = 0.3;
+                osc.start(); osc.stop(ctx.currentTime + 0.4);
+              } catch(e) {}
+              setRestAlarm(true);
+              setTimeout(() => { setRestAlarm(false); setRestSeconds(null); setRestTotal(null); }, 2500);
+              return 0;
+            }
+            return s - 1;
+          });
+        }, 1000);
+        return () => clearInterval(t);
+      }, [restSeconds !== null ? Math.ceil(restSeconds / 999) : -1]); // eslint-disable-line
+
+      const startRest = (val) => {
+        setRestSeconds(val);
+        setRestTotal(val);
+        setRestAlarm(false);
+        setMode("timer");
+        setExpanded(false);
+      };
+
+      // ── Drag com pointer events (touch + mouse) ──
+      const onPointerDown = useCallback((e) => {
+        e.preventDefault();
+        dragging.current = true;
+        moved.current     = false;
+        const rect = ballRef.current.getBoundingClientRect();
+        dragOffset.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+        ballRef.current.setPointerCapture(e.pointerId);
+      }, []);
+
+      const onPointerMove = useCallback((e) => {
+        if (!dragging.current) return;
+        moved.current = true;
+        const nx = e.clientX - dragOffset.current.x;
+        const ny = e.clientY - dragOffset.current.y;
+        const maxX = window.innerWidth  - 72;
+        const maxY = window.innerHeight - 72;
+        setPos({ x: Math.max(0, Math.min(nx, maxX)), y: Math.max(0, Math.min(ny, maxY)) });
+      }, []);
+
+      const onPointerUp = useCallback((e) => {
+        if (!dragging.current) return;
+        dragging.current = false;
+        // Se não moveu → é clique → toggle expanded
+        if (!moved.current) {
+          setExpanded(ex => !ex);
+        }
+        moved.current = false;
+      }, []);
+
+      const formatTime = (s) => {
+        const m = Math.floor(s / 60);
+        const sec = s % 60;
+        return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+      };
+
+      const restPct  = (restTotal && restSeconds !== null) ? restSeconds / restTotal : 0;
+      const SIZE      = 68;
+      const STROKE    = 4;
+      const R         = (SIZE - STROKE * 2) / 2;
+      const CIRCUM    = 2 * Math.PI * R;
+
+      if (!workoutActive) return null;
+
+      return (
+        <>
+          <style>{`
+            @keyframes alarmRing{0%,100%{opacity:1}50%{opacity:0.3}}
+            @keyframes ballPop{0%{transform:scale(0.5);opacity:0}100%{transform:scale(1);opacity:1}}
+          `}</style>
+
+          {/* BOLINHA */}
+          <div
+            ref={ballRef}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            style={{
+              position: "fixed",
+              left: pos.x,
+              top:  pos.y,
+              width:  SIZE,
+              height: SIZE,
+              zIndex: 1000,
+              touchAction: "none",
+              userSelect: "none",
+              WebkitUserSelect: "none",
+              cursor: "grab",
+              animation: "ballPop 0.25s ease",
+            }}
+          >
+            {/* SVG anel de progresso */}
+            <svg
+              width={SIZE} height={SIZE}
+              viewBox={`0 0 ${SIZE} ${SIZE}`}
+              style={{ position: "absolute", top: 0, left: 0, transform: "rotate(-90deg)" }}
+            >
+              {/* track */}
+              <circle cx={SIZE/2} cy={SIZE/2} r={R} fill="none" stroke="rgba(200,255,62,0.15)" strokeWidth={STROKE} />
+              {/* progresso do timer */}
+              {mode === "timer" && restSeconds !== null && (
+                <circle
+                  cx={SIZE/2} cy={SIZE/2} r={R}
+                  fill="none"
+                  stroke={restAlarm ? C.red : restSeconds <= 5 ? C.red : C.accent}
+                  strokeWidth={STROKE}
+                  strokeDasharray={`${CIRCUM * restPct} ${CIRCUM}`}
+                  strokeLinecap="round"
+                  style={{ transition: "stroke-dasharray 0.9s linear", animation: restAlarm ? "alarmRing 0.4s infinite" : "none" }}
+                />
+              )}
+              {/* progresso do cronômetro (voltas a cada 60s) */}
+              {mode === "stopwatch" && (
+                <circle
+                  cx={SIZE/2} cy={SIZE/2} r={R}
+                  fill="none"
+                  stroke={C.accent}
+                  strokeWidth={STROKE}
+                  strokeDasharray={`${CIRCUM * ((workoutSeconds % 60) / 60)} ${CIRCUM}`}
+                  strokeLinecap="round"
+                  style={{ transition: "stroke-dasharray 0.9s linear" }}
+                />
+              )}
+            </svg>
+
+            {/* Centro da bolinha */}
+            <div style={{
+              position: "absolute", inset: STROKE * 2,
+              borderRadius: "50%",
+              background: "rgba(8,10,6,0.95)",
+              border: `1px solid ${mode === "timer" && restAlarm ? C.red : C.accent}44`,
+              display: "flex", flexDirection: "column",
+              alignItems: "center", justifyContent: "center",
+              gap: 1,
+              boxShadow: `0 0 16px ${mode === "timer" && restAlarm ? C.red : C.accent}44`,
+            }}>
+              {mode === "stopwatch" ? (
+                <>
+                  <span style={{ fontSize: 7, fontWeight: 700, letterSpacing: 1, color: C.muted2, textTransform: "uppercase" }}>TREINO</span>
+                  <span style={{ fontFamily: "'Oswald',Impact,sans-serif", fontSize: 13, fontWeight: 700, color: C.accent, letterSpacing: 1, lineHeight: 1 }}>
+                    {formatTime(workoutSeconds)}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span style={{ fontSize: 7, fontWeight: 700, letterSpacing: 1, color: C.muted2, textTransform: "uppercase" }}>
+                    {restAlarm ? "FIM!" : "DESCANSO"}
+                  </span>
+                  <span style={{
+                    fontFamily: "'Oswald',Impact,sans-serif",
+                    fontSize: restSeconds !== null ? 13 : 12,
+                    fontWeight: 700,
+                    color: restAlarm ? C.red : restSeconds !== null ? (restSeconds <= 5 ? C.red : C.text) : C.muted2,
+                    letterSpacing: 1, lineHeight: 1,
+                    animation: restAlarm ? "alarmRing 0.4s infinite" : "none",
+                  }}>
+                    {restSeconds !== null ? formatTime(restSeconds) : "--:--"}
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* PAINEL EXPANDIDO */}
+          {expanded && (
+            <div
+              style={{
+                position: "fixed",
+                left: Math.min(pos.x, window.innerWidth - 210),
+                top:  pos.y + SIZE + 8,
+                width: 200,
+                background: "rgba(8,10,6,0.97)",
+                border: `1px solid ${C.accent}55`,
+                borderRadius: 8,
+                padding: "12px 10px",
+                zIndex: 1001,
+                boxShadow: `0 8px 32px rgba(0,0,0,0.8), 0 0 16px ${C.accent}22`,
+              }}
+            >
+              {/* Linha superior: trocar modo */}
+              <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+                <button
+                  onClick={() => setMode("stopwatch")}
+                  style={{
+                    flex: 1, padding: "7px 4px", borderRadius: 4,
+                    background: mode === "stopwatch" ? C.accentDim : "transparent",
+                    border: `1px solid ${mode === "stopwatch" ? C.accent : C.border}`,
+                    color: mode === "stopwatch" ? C.accent : C.muted2,
+                    fontSize: 11, fontWeight: 700, cursor: "pointer",
+                    fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: 1,
+                  }}
+                >⏱ CRONÔMETRO</button>
+                <button
+                  onClick={() => setMode("timer")}
+                  style={{
+                    flex: 1, padding: "7px 4px", borderRadius: 4,
+                    background: mode === "timer" ? C.accentDim : "transparent",
+                    border: `1px solid ${mode === "timer" ? C.accent : C.border}`,
+                    color: mode === "timer" ? C.accent : C.muted2,
+                    fontSize: 11, fontWeight: 700, cursor: "pointer",
+                    fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: 1,
+                  }}
+                >⬇ TEMPORIZADOR</button>
+              </div>
+
+              {/* Presets de descanso */}
+              {mode === "timer" && (
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.muted2, textTransform: "uppercase", marginBottom: 6 }}>DESCANSO</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5 }}>
+                    {REST_PRESETS.map(p => (
+                      <button
+                        key={p.val}
+                        onClick={() => startRest(p.val)}
+                        style={{
+                          padding: "9px 4px", borderRadius: 3,
+                          background: restTotal === p.val && restSeconds !== null ? C.accentDim : "#0a0c08",
+                          border: `1px solid ${restTotal === p.val && restSeconds !== null ? C.accent : C.border}`,
+                          color: restTotal === p.val && restSeconds !== null ? C.accent : C.muted2,
+                          fontSize: 12, fontWeight: 700, cursor: "pointer",
+                          fontFamily: "'Barlow Condensed',sans-serif",
+                        }}
+                      >{p.label}</button>
+                    ))}
+                  </div>
+                  {restSeconds !== null && (
+                    <button
+                      onClick={() => { setRestSeconds(null); setRestTotal(null); setRestAlarm(false); }}
+                      style={{
+                        width: "100%", marginTop: 5, padding: "7px",
+                        background: "transparent", border: `1px solid ${C.border}`,
+                        color: C.muted2, borderRadius: 3, fontSize: 11, fontWeight: 700,
+                        cursor: "pointer", fontFamily: "'Barlow Condensed',sans-serif",
+                      }}
+                    >✕ CANCELAR</button>
+                  )}
+                </div>
+              )}
+
+              {/* Divisor */}
+              <div style={{ height: 1, background: C.border, margin: "6px 0 10px" }} />
+
+              {/* Ações do treino */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <button
+                  onClick={() => { setExpanded(false); onFinish(); }}
+                  style={{
+                    width: "100%", padding: "9px", borderRadius: 3,
+                    background: C.accentDim, border: `1px solid ${C.accent}55`,
+                    color: C.accentText, fontSize: 12, fontWeight: 700,
+                    cursor: "pointer", fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: 1,
+                  }}
+                >✅ FINALIZAR TREINO</button>
+                <button
+                  onClick={() => { setExpanded(false); onStop(); }}
+                  style={{
+                    width: "100%", padding: "9px", borderRadius: 3,
+                    background: C.redDim, border: `1px solid ${C.red}44`,
+                    color: C.red, fontSize: 12, fontWeight: 700,
+                    cursor: "pointer", fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: 1,
+                  }}
+                >■ ENCERRAR SEM SALVAR</button>
+              </div>
+            </div>
+          )}
+
+          {/* Overlay para fechar painel ao clicar fora */}
+          {expanded && (
+            <div
+              onClick={() => setExpanded(false)}
+              style={{ position: "fixed", inset: 0, zIndex: 999 }}
+            />
+          )}
+        </>
+      );
+    }
+
     // ════════════════════════════════════════════════════════════
     //  MAIN APP
     // ════════════════════════════════════════════════════════════
@@ -813,9 +1124,6 @@ ${memoryLines.join("\n")}
       const [menuOpen,     setMenuOpen]     = useState(false);
       const [workoutActive,    setWorkoutActive]    = useState(false);
       const [workoutSeconds,   setWorkoutSeconds]   = useState(0);
-      const [restSeconds,      setRestSeconds]      = useState(null);  // null = inativo
-      const [restTotal,        setRestTotal]        = useState(null);
-      const [restAlarm,        setRestAlarm]        = useState(false);
       const [motiveBanner,     setMotiveBanner]     = useState("");
       const [motiveVisible,    setMotiveVisible]    = useState(false);
       const [showMigrate,  setShowMigrate]  = useState(false);
@@ -874,33 +1182,7 @@ ${memoryLines.join("\n")}
         return ()=>clearInterval(t);
       }, [workoutActive]);
       
-      // Timer de descanso regressivo
-      useEffect(()=>{
-        if(restSeconds === null || restSeconds <= 0) return;
-        const t = setInterval(()=>{
-          setRestSeconds(s=>{
-            if(s <= 1){
-              clearInterval(t);
-              // Vibração
-              try{ navigator.vibrate && navigator.vibrate([200,100,200]); }catch(e){}
-              // Bipe sonoro
-              try{
-                const ctx = new (window.AudioContext||window.webkitAudioContext)();
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
-                osc.connect(gain); gain.connect(ctx.destination);
-                osc.frequency.value = 880; gain.gain.value = 0.3;
-                osc.start(); osc.stop(ctx.currentTime + 0.3);
-              }catch(e){}
-              setRestAlarm(true);
-              setTimeout(()=>{ setRestAlarm(false); setRestSeconds(null); setRestTotal(null); }, 2000);
-              return 0;
-            }
-            return s-1;
-          });
-        }, 1000);
-        return ()=>clearInterval(t);
-      }, [restSeconds]);
+      
       useEffect(()=>{ const today=todayISO(); if(feelings[today]){setTodayEnergy(feelings[today].energy||null);setTodayResult(feelings[today].result||null);}else{setTodayEnergy(null);setTodayResult(null);} },[feelings]);
       useEffect(()=>{ if(chatEndRef.current)chatEndRef.current.scrollIntoView({behavior:"smooth"}); },[chatMessages]);
 
@@ -988,18 +1270,9 @@ ${memoryLines.join("\n")}
         } catch(e){}
       };
       
-      const startRestTimer = (seconds) => {
-        setRestSeconds(seconds);
-        setRestTotal(seconds);
-        setRestAlarm(false);
-      };
-      
       const stopWorkout = () => {
         setWorkoutActive(false);
         setWorkoutSeconds(0);
-        setRestSeconds(null);
-        setRestTotal(null);
-        setRestAlarm(false);
         setMotiveVisible(false);
       };
       
@@ -1363,12 +1636,6 @@ ${memoryLines.join("\n")}
                           </div>
                         </button>
                       )}
-                      {[{label:"30s",val:30},{label:"60s",val:60},{label:"90s",val:90},{label:"2min",val:120}].map(p=>(
-                        <button key={p.val} onClick={()=>{setQuickMenuOpen(false);startRestTimer(p.val);}} style={{display:"flex",alignItems:"center",gap:14,background:"transparent",border:`1px solid ${C.border}`,borderRadius:3,padding:"12px 16px",cursor:"pointer",textAlign:"left",width:"100%"}}>
-                          <span style={{fontSize:22,width:32,textAlign:"center"}}>⏱</span>
-                          <div style={{fontWeight:700,fontSize:14,color:C.text,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>DESCANSO {p.label}</div>
-                        </button>
-                      ))}
                     </div>
                   )}
             
@@ -1602,22 +1869,17 @@ ${memoryLines.join("\n")}
         );
       }
 
-      // ── EXERCICIOS TAB ──
+     // ── EXERCICIOS TAB ──
       if(bottomTab==="exercicios") {
-        const restPct = (restTotal && restSeconds !== null) ? (restSeconds / restTotal) : 0;
-        const restPresets = [{label:"30s",val:30},{label:"60s",val:60},{label:"90s",val:90},{label:"2min",val:120}];
-      
         return (
           <div style={{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:"'Barlow Condensed',sans-serif",maxWidth:480,margin:"0 auto",paddingBottom:80}}>
             <style>{`@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700;800&family=Oswald:wght@400;500;600;700&display=swap'); *{box-sizing:border-box;} body{margin:0;background:#080a06;overflow-y:auto;}
-            @keyframes alarmPulse{0%,100%{color:${C.red}}50%{color:#ff9999}}
             @keyframes fadeInDown{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
             `}</style>
-      
+
             {/* HEADER DIAS */}
             <div style={{padding:"20px 16px 14px",background:C.bgCard,borderBottom:`1px solid ${C.border}`,position:"sticky",top:0,zIndex:10}}>
               <div style={{fontFamily:"'Oswald',Impact,sans-serif",fontSize:28,letterSpacing:3,color:C.accent,fontWeight:700,marginBottom:10}}>EXERCÍCIOS</div>
-              {/* DAY TABS */}
               <div style={{display:"flex",overflowX:"auto",marginLeft:-4,marginRight:-4,paddingLeft:4}}>
                 {DAYS.map(day=>{
                   const active=activeDay===day.key; const isToday=day.key===todayKey; const count=(workouts[day.key]||[]).length;
@@ -1631,41 +1893,9 @@ ${memoryLines.join("\n")}
                 })}
               </div>
             </div>
-      
-            {/* BARRA DE TREINO ATIVO */}
-            {workoutActive && (
-              <div style={{position:"sticky",top:0,zIndex:9,background:"#060807",borderBottom:`1px solid ${C.accent}44`,animation:"fadeInDown 0.3s ease"}}>
-                {/* Linha 1: cronômetro geral */}
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px 6px",background:`linear-gradient(135deg,#0a0f06,#060807)`}}>
-                  <div style={{display:"flex",alignItems:"center",gap:10}}>
-                    <span style={{fontSize:14}}>⏱</span>
-                    <span style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.muted2,textTransform:"uppercase"}}>TREINO</span>
-                    <span style={{fontFamily:"'Oswald',Impact,sans-serif",fontSize:24,color:C.accent,fontWeight:700,letterSpacing:2,lineHeight:1}}>{formatWorkoutTime(workoutSeconds)}</span>
-                  </div>
-                  <button onClick={()=>{stopWorkout();finishWorkout();}} style={{background:C.redDim,border:`1px solid ${C.red}66`,color:C.red,borderRadius:2,padding:"7px 14px",fontSize:11,fontWeight:800,letterSpacing:1.5,cursor:"pointer",fontFamily:"'Oswald',sans-serif"}}>■ ENCERRAR</button>
-                </div>
-                {/* Linha 2: timer de descanso */}
-                <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 16px 10px"}}>
-                  <span style={{fontSize:12}}>🔁</span>
-                  <span style={{fontSize:9,fontWeight:700,letterSpacing:1,color:C.muted,textTransform:"uppercase",marginRight:2}}>DESCANSO</span>
-                  {restPresets.map(p=>(
-                    <button key={p.val} onClick={()=>startRestTimer(p.val)} style={{background:restTotal===p.val&&restSeconds!==null?C.accentDim:"transparent",border:`1px solid ${restTotal===p.val&&restSeconds!==null?C.accent+"88":C.border}`,color:restTotal===p.val&&restSeconds!==null?C.accent:C.muted2,borderRadius:2,padding:"5px 8px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>
-                      {p.label}
-                    </button>
-                  ))}
-                  {restSeconds !== null ? (
-                    <span style={{fontFamily:"'Oswald',Impact,sans-serif",fontSize:18,fontWeight:700,letterSpacing:1,marginLeft:4,animation:restAlarm?"alarmPulse 0.4s infinite":restSeconds<=5?"none":"none",color:restAlarm?C.red:restSeconds<=5?C.red:C.text}}>
-                      {String(Math.floor(restSeconds/60)).padStart(2,"0")}:{String(restSeconds%60).padStart(2,"0")}
-                    </span>
-                  ) : (
-                    <span style={{fontFamily:"'Oswald',Impact,sans-serif",fontSize:16,color:C.muted,letterSpacing:1,marginLeft:4,opacity:0.4}}>--:--</span>
-                  )}
-                </div>
-              </div>
-            )}
-      
+
             <div style={{padding:"16px",paddingBottom:120}}>
-      
+
               {/* BOTÃO INICIAR TREINO */}
               {!workoutActive && (
                 <button onClick={startWorkout} style={{width:"100%",background:`linear-gradient(135deg,${C.accentDim},rgba(200,255,62,0.06))`,border:`2px solid ${C.accent}66`,borderRadius:4,padding:"18px",fontSize:16,fontWeight:800,letterSpacing:3,cursor:"pointer",fontFamily:"'Oswald',sans-serif",color:C.accent,display:"flex",alignItems:"center",justifyContent:"center",gap:12,marginBottom:16,boxShadow:`0 0 24px ${C.accent}22`}}>
@@ -1673,7 +1903,7 @@ ${memoryLines.join("\n")}
                   INICIAR TREINO
                 </button>
               )}
-      
+
               {/* BANNER MOTIVACIONAL */}
               {motiveVisible && motiveBanner && (
                 <div style={{marginBottom:16,background:"#0a0f06",border:`1px solid ${C.accent}44`,borderRadius:4,padding:"12px 16px",display:"flex",alignItems:"flex-start",gap:10,animation:"fadeInDown 0.4s ease",position:"relative"}}>
@@ -1685,7 +1915,7 @@ ${memoryLines.join("\n")}
                   <button onClick={()=>setMotiveVisible(false)} style={{position:"absolute",top:8,right:8,background:"none",border:"none",color:C.muted,fontSize:14,cursor:"pointer"}}>✕</button>
                 </div>
               )}
-      
+
               {/* CABEÇALHO DO DIA */}
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
                 <div>
@@ -1693,7 +1923,7 @@ ${memoryLines.join("\n")}
                   {dayExercises.length>0&&<div style={{fontSize:12,color:C.muted2,marginTop:2}}>{dayExercises.length} exercício{dayExercises.length!==1?"s":""} · {dayExercises.reduce((acc,ex)=>acc+ex.sets.length,0)} séries</div>}
                 </div>
               </div>
-      
+
               {dayExercises.length===0&&(
                 <div style={{textAlign:"center",padding:"52px 20px",color:C.muted}}>
                   <div style={{fontSize:52,marginBottom:14}}>🏋️</div>
@@ -1701,7 +1931,7 @@ ${memoryLines.join("\n")}
                   <div style={{fontSize:13,lineHeight:1.6}}>Adicione exercícios para este dia.</div>
                 </div>
               )}
-      
+
               {dayExercises.map((ex,exIdx)=>{
                 const prog=getProgression(ex.name,ex.sets,history);
                 return (
@@ -1739,22 +1969,11 @@ ${memoryLines.join("\n")}
                         </div>
                       ))}
                     </div>
-                    {/* Botão de descanso rápido por exercício (apenas durante treino ativo) */}
-                    {workoutActive && (
-                      <div style={{padding:"8px 14px",borderTop:`1px solid ${C.border}`,display:"flex",gap:6}}>
-                        <span style={{fontSize:10,color:C.muted,alignSelf:"center",marginRight:4}}>⏱</span>
-                        {restPresets.map(p=>(
-                          <button key={p.val} onClick={()=>startRestTimer(p.val)} style={{background:"transparent",border:`1px solid ${C.border}`,color:C.muted2,borderRadius:2,padding:"4px 10px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif"}}>
-                            {p.label}
-                          </button>
-                        ))}
-                      </div>
-                    )}
                   </div>
                 );
               })}
             </div>
-      
+
             {/* BOTÕES RODAPÉ */}
             <div style={{position:"fixed",bottom:72,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,padding:"12px 16px 0",background:`linear-gradient(to top, ${C.bg} 70%, transparent)`,pointerEvents:"none",display:"flex",flexDirection:"column",gap:8}}>
               {dayExercises.length>0&&(
@@ -1766,13 +1985,20 @@ ${memoryLines.join("\n")}
                 + NOVO EXERCÍCIO
               </button>
             </div>
-      
+
+            {/* BOLINHA FLUTUANTE — aparece apenas com treino ativo */}
+            <FloatingWorkoutBall
+              workoutActive={workoutActive}
+              workoutSeconds={workoutSeconds}
+              onStop={stopWorkout}
+              onFinish={()=>{ stopWorkout(); finishWorkout(); }}
+            />
+
             {renderModals()}
             <BottomNav active={bottomTab} onChange={(tab)=>{setQuickMenuOpen(false);setMenuOpen(false);setBottomTab(tab);}} onPlusClick={()=>setQuickMenuOpen(true)} />
           </div>
         );
       }
-
       // ── PERFIL VIEW ──
       if(bottomTab==="perfil") {
         const hasBodyData = profile?.weight && profile?.height;
