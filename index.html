@@ -783,7 +783,7 @@ ${memoryLines.join("\n")}
 
    // ── FLOATING WORKOUT BALL ──
     // Bolinha flutuante: EXCLUSIVAMENTE temporizador de descanso
-    function FloatingWorkoutBall({ workoutActive, onStop, onFinish }) {
+   function FloatingWorkoutBall({ workoutActive }) {
       const [restSeconds,  setRestSeconds]  = useState(null);   // null = parado
       const [restTotal,    setRestTotal]    = useState(60);      // último preset usado
       const [restRunning,  setRestRunning]  = useState(false);   // contando ou pausado
@@ -1145,29 +1145,11 @@ ${memoryLines.join("\n")}
                 </div>
               )}
 
-              {/* DIVISOR */}
-              <div style={{ height: 1, background: C.border, margin: "4px 0 10px" }} />
-
-              {/* AÇÕES DO TREINO */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <button
-                  onPointerDown={e => { e.stopPropagation(); setExpanded(false); onFinish(); }}
-                  style={{
-                    width: "100%", padding: "9px", borderRadius: 4,
-                    background: C.accentDim, border: `1px solid ${C.accent}55`,
-                    color: C.accentText, fontSize: 12, fontWeight: 700,
-                    cursor: "pointer", fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: 1,
-                  }}
-                >✅ FINALIZAR TREINO</button>
-                <button
-                  onPointerDown={e => { e.stopPropagation(); setExpanded(false); onStop(); }}
-                  style={{
-                    width: "100%", padding: "9px", borderRadius: 4,
-                    background: C.redDim, border: `1px solid ${C.red}44`,
-                    color: C.red, fontSize: 12, fontWeight: 700,
-                    cursor: "pointer", fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: 1,
-                  }}
-                >■ ENCERRAR SEM SALVAR</button>
+              {/* Dica de uso */}
+              <div style={{ padding: "6px 4px 2px", textAlign: "center" }}>
+                <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1, lineHeight: 1.5 }}>
+                  Toque para abrir/fechar<br/>Arraste para mover
+                </div>
               </div>
             </div>
           )}
@@ -1191,9 +1173,6 @@ ${memoryLines.join("\n")}
       const [deleteConfirm, setDeleteConfirm] = useState(null);
       const [bottomTab,  setBottomTab]  = useState("inicio");
       const [exerciseName, setExerciseName] = useState("");
-      const [timerSeconds, setTimerSeconds] = useState(0);
-      const [timerRunning, setTimerRunning] = useState(false);
-      const [timerOpen,    setTimerOpen]    = useState(false);
       const [sets,       setSets]       = useState([{reps:"",weight:""}]);
       const [aiReport,   setAiReport]   = useState("");
       const [aiLoading,  setAiLoading]  = useState(false);
@@ -1344,6 +1323,7 @@ ${memoryLines.join("\n")}
         await db.saveHistory(user.id,today,activeDay,exs);
         const entry={date:today,day:activeDay,exercises:exs};
         setHistory(prev=>[entry,...prev.filter(h=>!(h.date===today&&h.day===activeDay))]);
+        stopWorkout();
         alert("✅ Treino salvo no histórico!");
       };
 
@@ -1700,7 +1680,7 @@ ${memoryLines.join("\n")}
                         </div>
                       </button>
                       {(workouts[todayKey]||[]).length>0&&(
-                        <button onClick={()=>{setQuickMenuOpen(false);stopWorkout();finishWorkout();}} style={{display:"flex",alignItems:"center",gap:14,background:"transparent",border:`1px solid ${C.border}`,borderRadius:3,padding:"14px 16px",cursor:"pointer",textAlign:"left",width:"100%"}}>
+                        <button onClick={()=>{setQuickMenuOpen(false);finishWorkout();}} style={{display:"flex",alignItems:"center",gap:14,background:"transparent",border:`1px solid ${C.border}`,borderRadius:3,padding:"14px 16px",cursor:"pointer",textAlign:"left",width:"100%"}}>
                           <span style={{fontSize:22,width:32,textAlign:"center"}}>✅</span>
                           <div>
                             <div style={{fontWeight:700,fontSize:14,color:C.text,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>FINALIZAR TREINO</div>
@@ -1736,19 +1716,10 @@ ${memoryLines.join("\n")}
                           </div>
                         </button>
                       ):(
-                        <button onClick={()=>{setQuickMenuOpen(false);stopWorkout();finishWorkout();}} style={{display:"flex",alignItems:"center",gap:14,background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:3,padding:"14px 16px",cursor:"pointer",textAlign:"left",width:"100%"}}>
+                        <button onClick={()=>{setQuickMenuOpen(false);finishWorkout();}} style={{display:"flex",alignItems:"center",gap:14,background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:3,padding:"14px 16px",cursor:"pointer",textAlign:"left",width:"100%"}}>
                           <span style={{fontSize:22,width:32,textAlign:"center"}}>■</span>
                           <div>
-                            <div style={{fontWeight:700,fontSize:14,color:C.red,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>ENCERRAR TREINO</div>
-                            <div style={{fontSize:11,color:C.muted2,marginTop:2}}>Parar cronômetro e salvar</div>
-                          </div>
-                        </button>
-                      )}
-                      {dayExercises.length>0&&(
-                        <button onClick={()=>{setQuickMenuOpen(false);finishWorkout();}} style={{display:"flex",alignItems:"center",gap:14,background:"transparent",border:`1px solid ${C.border}`,borderRadius:3,padding:"14px 16px",cursor:"pointer",textAlign:"left",width:"100%"}}>
-                          <span style={{fontSize:22,width:32,textAlign:"center"}}>✅</span>
-                          <div>
-                            <div style={{fontWeight:700,fontSize:14,color:C.text,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>FINALIZAR TREINO</div>
+                            <div style={{fontWeight:700,fontSize:14,color:C.red,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>FINALIZAR TREINO</div>
                             <div style={{fontSize:11,color:C.muted2,marginTop:2}}>Registrar resultado e salvar histórico</div>
                           </div>
                         </button>
@@ -1989,90 +1960,153 @@ ${memoryLines.join("\n")}
      // ── EXERCICIOS TAB ──
       if(bottomTab==="exercicios") {
         return (
-          <div style={{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:"'Barlow Condensed',sans-serif",maxWidth:480,margin:"0 auto",paddingBottom:80}}>
-            <style>{`@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700;800&family=Oswald:wght@400;500;600;700&display=swap'); *{box-sizing:border-box;} body{margin:0;background:#080a06;overflow-y:auto;}
-            @keyframes fadeInDown{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+          <div style={{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:"'Barlow Condensed',sans-serif",maxWidth:480,margin:"0 auto",paddingBottom:160}}>
+            <style>{`
+              @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700;800&family=Oswald:wght@400;500;600;700&display=swap');
+              *{box-sizing:border-box;} body{margin:0;background:#080a06;overflow-y:auto;}
+              @keyframes fadeInDown{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
+              @keyframes pulseGlow{0%,100%{box-shadow:0 0 0 0 rgba(200,255,62,0.3)}50%{box-shadow:0 0 0 6px rgba(200,255,62,0)}}
             `}</style>
 
-            {/* HEADER DIAS */}
-            <div style={{padding:"20px 16px 14px",background:C.bgCard,borderBottom:`1px solid ${C.border}`,position:"sticky",top:0,zIndex:10}}>
-              <div style={{fontFamily:"'Oswald',Impact,sans-serif",fontSize:28,letterSpacing:3,color:C.accent,fontWeight:700,marginBottom:10}}>EXERCÍCIOS</div>
-              <div style={{display:"flex",overflowX:"auto",marginLeft:-4,marginRight:-4,paddingLeft:4}}>
-                {DAYS.map(day=>{
-                  const active=activeDay===day.key; const isToday=day.key===todayKey; const count=(workouts[day.key]||[]).length;
-                  return (
-                    <button key={day.key} onClick={()=>{setActiveDay(day.key);}} style={{flex:"0 0 auto",padding:"8px 14px 6px",border:"none",background:"transparent",color:active?C.accent:C.muted2,fontFamily:"'Oswald',sans-serif",fontSize:16,letterSpacing:2,cursor:"pointer",borderBottom:active?`2px solid ${C.accent}`:"2px solid transparent",display:"flex",flexDirection:"column",alignItems:"center",gap:2,fontWeight:active?600:400,position:"relative"}}>
-                      {day.label}
-                      {isToday&&<span style={{position:"absolute",top:4,right:4,width:4,height:4,borderRadius:"50%",background:C.accent}} />}
-                      {count>0&&<span style={{fontSize:9,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,color:active?C.accent:C.muted}}>{count}</span>}
-                    </button>
-                  );
-                })}
+            {/* ── HEADER STICKY ── */}
+            <div style={{position:"sticky",top:0,zIndex:20,background:C.bgCard,borderBottom:`1px solid ${C.border}`}}>
+
+              {/* Barra de status do treino (aparece só quando ativo) */}
+              {workoutActive && (
+                <div style={{
+                  background:`linear-gradient(135deg,rgba(200,255,62,0.1),rgba(200,255,62,0.04))`,
+                  borderBottom:`1px solid ${C.accent}33`,
+                  padding:"10px 16px",
+                  display:"flex",alignItems:"center",justifyContent:"space-between",
+                  animation:"fadeInDown 0.3s ease",
+                }}>
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    {/* Dot pulsante */}
+                    <div style={{width:8,height:8,borderRadius:"50%",background:C.accent,animation:"pulseGlow 2s infinite",flexShrink:0}} />
+                    <div>
+                      <div style={{fontSize:8,fontWeight:700,letterSpacing:2,color:C.accentText,textTransform:"uppercase",lineHeight:1}}>TREINO ATIVO</div>
+                      <div style={{fontFamily:"'Oswald',Impact,sans-serif",fontSize:22,color:C.accent,fontWeight:700,letterSpacing:2,lineHeight:1.1,marginTop:1}}>{formatWorkoutTime(workoutSeconds)}</div>
+                    </div>
+                  </div>
+                  {/* Só stop, sem finalizar aqui — finalizar fica no rodapé */}
+                 <button
+                    onClick={()=>{
+                      if(window.confirm("Parar o cronômetro? O treino não será salvo automaticamente.")){
+                        stopWorkout();
+                      }
+                    }}
+                    style={{background:"transparent",border:`1px solid ${C.muted}44`,borderRadius:3,padding:"6px 12px",fontSize:10,fontWeight:700,color:C.muted2,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}
+                  >■ PARAR</button>
+                </div>
+              )}
+
+              {/* Seletor de dias */}
+              <div style={{padding:"14px 16px 0"}}>
+                <div style={{fontFamily:"'Oswald',Impact,sans-serif",fontSize:22,letterSpacing:3,color:C.accent,fontWeight:700,marginBottom:10}}>TREINO</div>
+                <div style={{display:"flex",overflowX:"auto",gap:2,paddingBottom:0,scrollbarWidth:"none"}}>
+                  {DAYS.map(day=>{
+                    const isActive=activeDay===day.key;
+                    const isToday=day.key===todayKey;
+                    const count=(workouts[day.key]||[]).length;
+                    const doneThisWeek=history.some(h=>getWeekKey(h.date)===currentWeekKey&&h.day===day.key);
+                    return (
+                      <button key={day.key} onClick={()=>setActiveDay(day.key)} style={{
+                        flex:"0 0 auto",padding:"8px 12px 10px",border:"none",
+                        background:isActive?C.accentDim:"transparent",
+                        color:isActive?C.accent:C.muted2,
+                        fontFamily:"'Oswald',sans-serif",fontSize:15,letterSpacing:2,cursor:"pointer",
+                        borderBottom:isActive?`2px solid ${C.accent}`:doneThisWeek?`2px solid ${C.accent}44`:"2px solid transparent",
+                        borderRadius:"3px 3px 0 0",
+                        display:"flex",flexDirection:"column",alignItems:"center",gap:3,
+                        fontWeight:isActive?600:400,position:"relative",
+                        transition:"all 0.15s",
+                      }}>
+                        {day.label}
+                        <div style={{display:"flex",alignItems:"center",gap:3}}>
+                          {count>0&&<span style={{fontSize:8,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,color:isActive?C.accent:C.muted,letterSpacing:0}}>{count}</span>}
+                          {doneThisWeek&&<span style={{fontSize:8,color:C.accent}}>✓</span>}
+                          {isToday&&!doneThisWeek&&<span style={{width:4,height:4,borderRadius:"50%",background:isActive?C.accent:C.accent+"88",display:"inline-block"}} />}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
 
-            <div style={{padding:"16px",paddingBottom:120}}>
+            {/* ── CONTEÚDO ── */}
+            <div style={{padding:"16px 16px 0"}}>
 
-             {/* BOTÃO INICIAR TREINO / CRONÔMETRO ATIVO */}
-              {!workoutActive ? (
-                <button onClick={startWorkout} style={{width:"100%",background:`linear-gradient(135deg,${C.accentDim},rgba(200,255,62,0.06))`,border:`2px solid ${C.accent}66`,borderRadius:4,padding:"18px",fontSize:16,fontWeight:800,letterSpacing:3,cursor:"pointer",fontFamily:"'Oswald',sans-serif",color:C.accent,display:"flex",alignItems:"center",justifyContent:"center",gap:12,marginBottom:16,boxShadow:`0 0 24px ${C.accent}22`}}>
-                  <span style={{fontSize:20}}>▶</span>
-                  INICIAR TREINO
-                </button>
-              ) : (
-                <div style={{width:"100%",background:`linear-gradient(135deg,rgba(200,255,62,0.08),rgba(200,255,62,0.03))`,border:`2px solid ${C.accent}88`,borderRadius:4,padding:"14px 18px",marginBottom:16,display:"flex",alignItems:"center",justifyContent:"space-between",boxShadow:`0 0 24px ${C.accent}22`}}>
-                  <div style={{display:"flex",alignItems:"center",gap:10}}>
-                    <span style={{fontSize:22}}>⏱</span>
-                    <div>
-                      <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.accentText,textTransform:"uppercase"}}>TREINO EM ANDAMENTO</div>
-                      <div style={{fontFamily:"'Oswald',Impact,sans-serif",fontSize:28,color:C.accent,fontWeight:700,letterSpacing:2,lineHeight:1}}>{formatWorkoutTime(workoutSeconds)}</div>
-                    </div>
-                  </div>
-                  <button onClick={stopWorkout} style={{background:C.redDim,border:`1px solid ${C.red}44`,color:C.red,borderRadius:3,padding:"8px 14px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>■ PARAR</button>
-                </div>
-              )}
-
-              {/* BANNER MOTIVACIONAL */}
+              {/* Banner motivacional da IA */}
               {motiveVisible && motiveBanner && (
-                <div style={{marginBottom:16,background:"#0a0f06",border:`1px solid ${C.accent}44`,borderRadius:4,padding:"12px 16px",display:"flex",alignItems:"flex-start",gap:10,animation:"fadeInDown 0.4s ease",position:"relative"}}>
-                  <span style={{fontSize:20,flexShrink:0}}>💬</span>
-                  <div>
-                    <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.accentText,textTransform:"uppercase",marginBottom:4}}>FORGE AI</div>
-                    <div style={{fontSize:14,color:C.text,lineHeight:1.5,fontStyle:"italic"}}>"{motiveBanner}"</div>
+                <div style={{marginBottom:14,background:"linear-gradient(135deg,#0a0f06,#0d120a)",border:`1px solid ${C.accent}33`,borderRadius:6,padding:"12px 14px",display:"flex",alignItems:"flex-start",gap:10,animation:"fadeInDown 0.4s ease",position:"relative"}}>
+                  <span style={{fontSize:18,flexShrink:0}}>💬</span>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:8,fontWeight:700,letterSpacing:2,color:C.accentText,textTransform:"uppercase",marginBottom:3}}>FORGE AI · AGORA</div>
+                    <div style={{fontSize:13,color:C.text,lineHeight:1.5,fontStyle:"italic"}}>"{motiveBanner}"</div>
                   </div>
-                  <button onClick={()=>setMotiveVisible(false)} style={{position:"absolute",top:8,right:8,background:"none",border:"none",color:C.muted,fontSize:14,cursor:"pointer"}}>✕</button>
+                  <button onClick={()=>setMotiveVisible(false)} style={{background:"none",border:"none",color:C.muted,fontSize:13,cursor:"pointer",flexShrink:0,padding:"0 0 0 4px"}}>✕</button>
                 </div>
               )}
 
-              {/* CABEÇALHO DO DIA */}
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+              {/* Cabeçalho do dia selecionado */}
+              <div style={{marginBottom:14,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                 <div>
-                  <div style={{fontFamily:"'Oswald',sans-serif",fontSize:26,letterSpacing:2,color:C.text,fontWeight:600}}>{currentDay.full}</div>
-                  {dayExercises.length>0&&<div style={{fontSize:12,color:C.muted2,marginTop:2}}>{dayExercises.length} exercício{dayExercises.length!==1?"s":""} · {dayExercises.reduce((acc,ex)=>acc+ex.sets.length,0)} séries</div>}
+                  <div style={{fontFamily:"'Oswald',sans-serif",fontSize:20,letterSpacing:1,color:C.text,fontWeight:600,lineHeight:1}}>{currentDay.full}</div>
+                  {dayExercises.length>0 && (
+                    <div style={{fontSize:11,color:C.muted2,marginTop:3}}>
+                      {dayExercises.length} exercício{dayExercises.length!==1?"s":""} · {dayExercises.reduce((a,ex)=>a+ex.sets.length,0)} séries
+                    </div>
+                  )}
                 </div>
+                {/* Botão iniciar treino — compacto no header quando há exercícios */}
+                {!workoutActive && dayExercises.length>0 && (
+                  <button
+                    onClick={startWorkout}
+                    style={{
+                      background:C.accent,color:"#000",border:"none",borderRadius:3,
+                      padding:"9px 16px",fontSize:12,fontWeight:800,letterSpacing:2,
+                      cursor:"pointer",fontFamily:"'Oswald',sans-serif",
+                      display:"flex",alignItems:"center",gap:6,flexShrink:0,
+                    }}
+                  >
+                    <span style={{fontSize:11}}>▶</span> INICIAR
+                  </button>
+                )}
               </div>
 
-              {dayExercises.length===0&&(
-                <div style={{textAlign:"center",padding:"52px 20px",color:C.muted}}>
-                  <div style={{fontSize:52,marginBottom:14}}>🏋️</div>
-                  <div style={{fontWeight:700,fontSize:16,color:C.muted2,marginBottom:6}}>Sem exercícios</div>
-                  <div style={{fontSize:13,lineHeight:1.6}}>Adicione exercícios para este dia.</div>
+              {/* Estado vazio */}
+              {dayExercises.length===0 && (
+                <div style={{textAlign:"center",padding:"48px 20px 32px",color:C.muted}}>
+                  <div style={{fontSize:44,marginBottom:12,opacity:0.6}}>🏋️</div>
+                  <div style={{fontFamily:"'Oswald',sans-serif",fontSize:18,letterSpacing:2,color:C.muted2,marginBottom:6,fontWeight:600}}>SEM EXERCÍCIOS</div>
+                  <div style={{fontSize:13,color:C.muted,lineHeight:1.6,marginBottom:20}}>
+                    {activeDay===todayKey?"Adicione os exercícios do seu treino de hoje.":"Monte o treino para "+currentDay.full+"."}
+                  </div>
+                  {/* Botão iniciar grande só quando vazio */}
+                  {!workoutActive && (
+                    <div style={{background:C.bgCard,border:`1px dashed ${C.border}`,borderRadius:6,padding:"16px",marginBottom:0}}>
+                      <div style={{fontSize:11,color:C.muted,marginBottom:0}}>Adicione exercícios para iniciar o treino</div>
+                    </div>
+                  )}
                 </div>
               )}
 
+              {/* Lista de exercícios */}
               {dayExercises.map((ex,exIdx)=>{
                 const prog=getProgression(ex.name,ex.sets,history);
                 return (
-                  <div key={ex.id} style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:4,marginBottom:12,overflow:"hidden"}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 14px",borderBottom:`1px solid ${C.border}`,background:C.bgCard2}}>
-                      <div style={{display:"flex",alignItems:"center",gap:10}}>
-                        <div style={{width:26,height:26,borderRadius:2,background:C.accentDim,border:`1px solid ${C.accent}33`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Oswald',sans-serif",fontSize:13,color:C.accentText,flexShrink:0,fontWeight:600}}>{exIdx+1}</div>
-                        <div>
-                          <div style={{fontWeight:700,fontSize:15}}>{ex.name}</div>
+                  <div key={ex.id} style={{background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:6,marginBottom:10,overflow:"hidden",transition:"border-color 0.2s"}}>
+                    {/* Header do exercício */}
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"11px 14px",borderBottom:`1px solid ${C.border}`,background:C.bgCard2}}>
+                      <div style={{display:"flex",alignItems:"center",gap:10,flex:1,minWidth:0}}>
+                        <div style={{width:24,height:24,borderRadius:2,background:C.accentDim,border:`1px solid ${C.accent}22`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Oswald',sans-serif",fontSize:12,color:C.accentText,flexShrink:0,fontWeight:700}}>{exIdx+1}</div>
+                        <div style={{minWidth:0}}>
+                          <div style={{fontWeight:700,fontSize:14,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ex.name}</div>
                           {prog&&(
-                            <div style={{fontSize:11,marginTop:1}}>
-                              {prog.type==="up"&&<span style={{color:C.accent}}>↑ +{prog.diff}kg vs último</span>}
-                              {prog.type==="down"&&<span style={{color:C.red}}>↓ -{prog.diff}kg vs último</span>}
+                            <div style={{fontSize:10,marginTop:1,display:"flex",alignItems:"center",gap:4}}>
+                              {prog.type==="up"&&<><span style={{color:C.accent,fontWeight:700}}>↑ +{prog.diff}kg</span><span style={{color:C.muted}}>vs anterior</span></>}
+                              {prog.type==="down"&&<><span style={{color:C.red,fontWeight:700}}>↓ -{prog.diff}kg</span><span style={{color:C.muted}}>vs anterior</span></>}
                               {prog.type==="volume_up"&&<span style={{color:C.accent}}>↑ mais volume</span>}
                               {prog.type==="volume_down"&&<span style={{color:C.red}}>↓ menos volume</span>}
                               {prog.type==="equal"&&<span style={{color:C.muted2}}>= mesmo peso</span>}
@@ -2080,45 +2114,115 @@ ${memoryLines.join("\n")}
                           )}
                         </div>
                       </div>
-                      <div style={{display:"flex",gap:6}}>
-                        <button onClick={()=>openEdit(ex)} style={{border:`1px solid ${C.border}`,background:"transparent",color:C.muted2,borderRadius:2,padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif"}}>EDITAR</button>
-                        <button onClick={()=>setDeleteConfirm(ex.id)} style={{border:"none",background:C.redDim,color:C.red,borderRadius:2,padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer"}}>✕</button>
+                      <div style={{display:"flex",gap:5,flexShrink:0}}>
+                        <button onClick={()=>openEdit(ex)} style={{border:`1px solid ${C.border}`,background:"transparent",color:C.muted2,borderRadius:3,padding:"5px 10px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>EDITAR</button>
+                        <button onClick={()=>setDeleteConfirm(ex.id)} style={{border:"none",background:C.redDim,color:C.red,borderRadius:3,padding:"5px 8px",fontSize:12,fontWeight:700,cursor:"pointer",lineHeight:1}}>✕</button>
                       </div>
                     </div>
+                    {/* Séries */}
                     <div>
-                      <div style={{display:"grid",gridTemplateColumns:"36px 1fr 1fr",padding:"6px 14px",borderBottom:`1px solid ${C.border}`}}>
-                        {["#","REPS","CARGA"].map(h=><div key={h} style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.muted,textTransform:"uppercase"}}>{h}</div>)}
+                      {/* Header colunas */}
+                      <div style={{display:"grid",gridTemplateColumns:"32px 1fr 1fr",padding:"5px 14px",background:"#0a0c08"}}>
+                        {["#","REPS","CARGA"].map(h=>(
+                          <div key={h} style={{fontSize:8,fontWeight:700,letterSpacing:2,color:C.muted,textTransform:"uppercase"}}>{h}</div>
+                        ))}
                       </div>
                       {ex.sets.map((set,si)=>(
-                        <div key={si} style={{display:"grid",gridTemplateColumns:"36px 1fr 1fr",padding:"10px 14px",borderBottom:si<ex.sets.length-1?`1px solid ${C.border}`:"none",background:si%2===0?"transparent":"#0d100b",alignItems:"center"}}>
-                          <div style={{fontSize:11,color:C.muted,fontFamily:"monospace"}}>S{si+1}</div>
-                          <div style={{fontSize:15,fontWeight:700}}>{set.reps}<span style={{fontSize:11,color:C.muted,marginLeft:2}}>rep</span></div>
-                          <div><span style={{fontFamily:"'Oswald',Impact,sans-serif",fontSize:22,color:C.accent,letterSpacing:1,fontWeight:600}}>{set.weight}</span><span style={{fontSize:10,color:C.muted,marginLeft:2}}>kg</span></div>
+                        <div key={si} style={{display:"grid",gridTemplateColumns:"32px 1fr 1fr",padding:"9px 14px",borderTop:`1px solid ${C.border}`,alignItems:"center",background:si%2===0?"transparent":"#0a0c08"}}>
+                          <div style={{fontSize:10,color:C.muted,fontFamily:"monospace"}}>S{si+1}</div>
+                          <div style={{fontSize:15,fontWeight:700,color:C.text}}>{set.reps}<span style={{fontSize:10,color:C.muted,marginLeft:2}}>rep</span></div>
+                          <div style={{display:"flex",alignItems:"baseline",gap:2}}>
+                            <span style={{fontFamily:"'Oswald',Impact,sans-serif",fontSize:20,color:set.weight>0?C.accent:C.muted,letterSpacing:1,fontWeight:600}}>{set.weight||"—"}</span>
+                            {set.weight>0&&<span style={{fontSize:9,color:C.muted}}>kg</span>}
+                          </div>
                         </div>
                       ))}
                     </div>
                   </div>
                 );
               })}
+
+              {/* Espaçamento para os botões fixos não cobrirem conteúdo */}
+              <div style={{height:8}} />
             </div>
 
-            {/* BOTÕES RODAPÉ */}
-            <div style={{position:"fixed",bottom:72,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,padding:"12px 16px 0",background:`linear-gradient(to top, ${C.bg} 70%, transparent)`,pointerEvents:"none",display:"flex",flexDirection:"column",gap:8}}>
-              {workoutActive && dayExercises.length>0&&(
-                <button onClick={()=>{ stopWorkout(); finishWorkout(); }} style={{width:"100%",background:"transparent",color:C.accentText,border:`1px solid ${C.accent}55`,borderRadius:3,padding:"12px",fontSize:13,fontWeight:700,letterSpacing:1.5,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",pointerEvents:"all"}}>
-                  ✅ FINALIZAR TREINO
-                </button>
+            {/* ── BOTÕES FIXOS NO RODAPÉ ── */}
+            {/* Gradiente de fade para suavizar a transição */}
+            <div style={{
+              position:"fixed",bottom:58,left:"50%",transform:"translateX(-50%)",
+              width:"100%",maxWidth:480,
+              background:`linear-gradient(to top, ${C.bg} 75%, transparent)`,
+              padding:"20px 16px 10px",
+              pointerEvents:"none",
+              zIndex:15,
+            }}>
+              {workoutActive ? (
+                /* Treino ativo: mostra botão FINALIZAR em destaque */
+                <div style={{display:"flex",flexDirection:"column",gap:8,pointerEvents:"all"}}>
+                  <button
+                    onClick={finishWorkout}
+                    style={{
+                      width:"100%",
+                      background:`linear-gradient(135deg,${C.accent},#a8d400)`,
+                      color:"#000",border:"none",borderRadius:4,
+                      padding:"16px",fontSize:15,fontWeight:800,letterSpacing:2,
+                      cursor:"pointer",fontFamily:"'Oswald',sans-serif",
+                      display:"flex",alignItems:"center",justifyContent:"center",gap:8,
+                      boxShadow:`0 4px 24px rgba(200,255,62,0.35)`,
+                    }}
+                  >
+                    <span style={{fontSize:16}}>✅</span> FINALIZAR TREINO
+                  </button>
+                  <button
+                    onClick={openAdd}
+                    style={{
+                      width:"100%",background:"transparent",color:C.muted2,
+                      border:`1px solid ${C.border}`,borderRadius:4,
+                      padding:"12px",fontSize:13,fontWeight:700,letterSpacing:1,
+                      cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",
+                    }}
+                  >+ ADICIONAR EXERCÍCIO</button>
+                </div>
+              ) : (
+                /* Treino inativo */
+                <div style={{display:"flex",flexDirection:"column",gap:8,pointerEvents:"all"}}>
+                  {dayExercises.length>0 && (
+                    <button
+                      onClick={startWorkout}
+                      style={{
+                        width:"100%",
+                        background:`linear-gradient(135deg,${C.accentDim},rgba(200,255,62,0.05))`,
+                        color:C.accent,border:`2px solid ${C.accent}77`,borderRadius:4,
+                        padding:"15px",fontSize:15,fontWeight:800,letterSpacing:3,
+                        cursor:"pointer",fontFamily:"'Oswald',sans-serif",
+                        display:"flex",alignItems:"center",justifyContent:"center",gap:10,
+                        boxShadow:`0 0 20px rgba(200,255,62,0.15)`,
+                      }}
+                    >
+                      <span style={{fontSize:16}}>▶</span> INICIAR TREINO
+                    </button>
+                  )}
+                  <button
+                    onClick={openAdd}
+                    style={{
+                      width:"100%",background:dayExercises.length===0?C.accent:"transparent",
+                      color:dayExercises.length===0?"#000":C.muted2,
+                      border:dayExercises.length===0?"none":`1px solid ${C.border}`,
+                      borderRadius:4,padding:"13px",fontSize:13,fontWeight:700,letterSpacing:dayExercises.length===0?2:1,
+                      cursor:"pointer",fontFamily:dayExercises.length===0?"'Oswald',sans-serif":"'Barlow Condensed',sans-serif",
+                      display:"flex",alignItems:"center",justifyContent:"center",gap:6,
+                      boxShadow:dayExercises.length===0?`0 0 20px rgba(200,255,62,0.3)`:"none",
+                    }}
+                  >
+                    {dayExercises.length===0?"+ NOVO EXERCÍCIO":"+ ADICIONAR EXERCÍCIO"}
+                  </button>
+                </div>
               )}
-              <button onClick={openAdd} style={{width:"100%",background:C.accent,color:"#000",border:"none",borderRadius:3,padding:"15px",fontSize:15,fontWeight:800,letterSpacing:2,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontFamily:"'Oswald',sans-serif",boxShadow:`0 0 24px ${C.accent}44`,pointerEvents:"all"}}>
-                + NOVO EXERCÍCIO
-              </button>
             </div>
 
-            {/* BOLINHA FLUTUANTE — aparece apenas com treino ativo */}
-            <FloatingWorkoutBall
+            {/* BOLINHA — apenas para temporizador de descanso */}
+           <FloatingWorkoutBall
               workoutActive={workoutActive}
-              onStop={stopWorkout}
-              onFinish={()=>{ stopWorkout(); finishWorkout(); }}
             />
 
             {renderModals()}
@@ -2560,8 +2664,8 @@ ${memoryLines.join("\n")}
                   <div style={{fontSize:9,fontWeight:600,letterSpacing:1,opacity:0.7,marginTop:1}}>REGISTRAR TREINO</div>
                 </div>
                 {todayExercises.length>0&&(
-                  <button onClick={(e)=>{e.stopPropagation();finishWorkout();}} style={{width:"100%",background:"transparent",color:C.accentText,border:`1px solid ${C.accent}44`,borderRadius:3,padding:"8px",fontSize:11,fontWeight:700,letterSpacing:1,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",marginTop:8}}>
-                    ✅ FINALIZAR
+                  <button onClick={(e)=>{e.stopPropagation(); if(!workoutActive){startWorkout().then(()=>{}); setTimeout(()=>{ setBottomTab("exercicios"); }, 100); } else { finishWorkout(); }}} style={{width:"100%",background:workoutActive?C.accent:"transparent",color:workoutActive?"#000":C.accentText,border:`1px solid ${C.accent}44`,borderRadius:3,padding:"8px",fontSize:11,fontWeight:700,letterSpacing:1,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",marginTop:8}}>
+                    {workoutActive?"✅ FINALIZAR":"▶ INICIAR"}
                   </button>
                 )}
               </div>
