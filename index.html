@@ -953,23 +953,22 @@ ${memoryLines.join("\n")}
             }}>
               {mode === "stopwatch" ? (
                 <>
-                  <span style={{ fontSize: 7, fontWeight: 700, letterSpacing: 1, color: C.muted2, textTransform: "uppercase" }}>TREINO</span>
-                  <span style={{ fontFamily: "'Oswald',Impact,sans-serif", fontSize: 13, fontWeight: 700, color: C.accent, letterSpacing: 1, lineHeight: 1 }}>
+                  <span style={{ fontSize: 16, lineHeight: 1 }}>🕐</span>
+                  <span style={{ fontFamily: "'Oswald',Impact,sans-serif", fontSize: 12, fontWeight: 700, color: C.accent, letterSpacing: 1, lineHeight: 1 }}>
                     {formatTime(workoutSeconds)}
                   </span>
                 </>
               ) : (
                 <>
-                  <span style={{ fontSize: 7, fontWeight: 700, letterSpacing: 1, color: C.muted2, textTransform: "uppercase" }}>
-                    {restAlarm ? "FIM!" : "DESCANSO"}
+                  <span style={{ fontSize: restAlarm ? 16 : 14, lineHeight: 1, animation: restAlarm ? "alarmRing 0.4s infinite" : "none" }}>
+                    {restAlarm ? "🔔" : restSeconds !== null ? "⏳" : "⏱"}
                   </span>
                   <span style={{
                     fontFamily: "'Oswald',Impact,sans-serif",
-                    fontSize: restSeconds !== null ? 13 : 12,
+                    fontSize: restSeconds !== null ? 12 : 11,
                     fontWeight: 700,
                     color: restAlarm ? C.red : restSeconds !== null ? (restSeconds <= 5 ? C.red : C.text) : C.muted2,
                     letterSpacing: 1, lineHeight: 1,
-                    animation: restAlarm ? "alarmRing 0.4s infinite" : "none",
                   }}>
                     {restSeconds !== null ? formatTime(restSeconds) : "--:--"}
                   </span>
@@ -1175,11 +1174,46 @@ ${memoryLines.join("\n")}
         }
       },[profile]);
       useEffect(()=>{ if(!timerRunning)return; const t=setInterval(()=>setTimerSeconds(s=>s+1),1000); return()=>clearInterval(t); },[timerRunning]);
-      // Cronômetro geral do treino
+      // Cronômetro geral do treino — Web Worker para não throttle em background
+      const workerRef = useRef(null);
+      const wakeLockRef = useRef(null);
+
       useEffect(()=>{
-        if(!workoutActive) return;
-        const t = setInterval(()=>setWorkoutSeconds(s=>s+1), 1000);
-        return ()=>clearInterval(t);
+        if(!workoutActive){
+          // Mata o worker e libera o wake lock ao parar
+          if(workerRef.current){ workerRef.current.terminate(); workerRef.current = null; }
+          if(wakeLockRef.current){ try{ wakeLockRef.current.release(); }catch(e){} wakeLockRef.current = null; }
+          return;
+        }
+        // Cria Web Worker inline via Blob — imune ao throttle do browser
+        const blob = new Blob([`
+          let s = 0;
+          self.onmessage = function(e){ if(e.data === 'reset') s = 0; };
+          setInterval(function(){ s++; self.postMessage(s); }, 1000);
+        `], {type:'application/javascript'});
+        const w = new Worker(URL.createObjectURL(blob));
+        w.onmessage = (e) => setWorkoutSeconds(e.data);
+        workerRef.current = w;
+        // WakeLock: mantém a tela acesa enquanto o treino está ativo
+        if('wakeLock' in navigator){
+          navigator.wakeLock.request('screen').then(lock => {
+            wakeLockRef.current = lock;
+          }).catch(()=>{});
+        }
+        // Reaquire o wake lock ao voltar para a tela (ele é liberado automaticamente quando vai para background)
+        const handleVisibility = () => {
+          if(document.visibilityState === 'visible' && 'wakeLock' in navigator){
+            navigator.wakeLock.request('screen').then(lock => {
+              wakeLockRef.current = lock;
+            }).catch(()=>{});
+          }
+        };
+        document.addEventListener('visibilitychange', handleVisibility);
+        return ()=>{
+          w.terminate();
+          workerRef.current = null;
+          document.removeEventListener('visibilitychange', handleVisibility);
+        };
       }, [workoutActive]);
       
       
@@ -1239,7 +1273,6 @@ ${memoryLines.join("\n")}
       const startWorkout = async () => {
         setWorkoutActive(true);
         setWorkoutSeconds(0);
-        setRestSeconds(null);
         setMotiveBanner("");
         setMotiveVisible(false);
       
@@ -1896,12 +1929,23 @@ ${memoryLines.join("\n")}
 
             <div style={{padding:"16px",paddingBottom:120}}>
 
-              {/* BOTÃO INICIAR TREINO */}
-              {!workoutActive && (
+             {/* BOTÃO INICIAR TREINO / CRONÔMETRO ATIVO */}
+              {!workoutActive ? (
                 <button onClick={startWorkout} style={{width:"100%",background:`linear-gradient(135deg,${C.accentDim},rgba(200,255,62,0.06))`,border:`2px solid ${C.accent}66`,borderRadius:4,padding:"18px",fontSize:16,fontWeight:800,letterSpacing:3,cursor:"pointer",fontFamily:"'Oswald',sans-serif",color:C.accent,display:"flex",alignItems:"center",justifyContent:"center",gap:12,marginBottom:16,boxShadow:`0 0 24px ${C.accent}22`}}>
                   <span style={{fontSize:20}}>▶</span>
                   INICIAR TREINO
                 </button>
+              ) : (
+                <div style={{width:"100%",background:`linear-gradient(135deg,rgba(200,255,62,0.08),rgba(200,255,62,0.03))`,border:`2px solid ${C.accent}88`,borderRadius:4,padding:"14px 18px",marginBottom:16,display:"flex",alignItems:"center",justifyContent:"space-between",boxShadow:`0 0 24px ${C.accent}22`}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <span style={{fontSize:22}}>⏱</span>
+                    <div>
+                      <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:C.accentText,textTransform:"uppercase"}}>TREINO EM ANDAMENTO</div>
+                      <div style={{fontFamily:"'Oswald',Impact,sans-serif",fontSize:28,color:C.accent,fontWeight:700,letterSpacing:2,lineHeight:1}}>{formatWorkoutTime(workoutSeconds)}</div>
+                    </div>
+                  </div>
+                  <button onClick={stopWorkout} style={{background:C.redDim,border:`1px solid ${C.red}44`,color:C.red,borderRadius:3,padding:"8px 14px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>■ PARAR</button>
+                </div>
               )}
 
               {/* BANNER MOTIVACIONAL */}
@@ -1976,8 +2020,8 @@ ${memoryLines.join("\n")}
 
             {/* BOTÕES RODAPÉ */}
             <div style={{position:"fixed",bottom:72,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,padding:"12px 16px 0",background:`linear-gradient(to top, ${C.bg} 70%, transparent)`,pointerEvents:"none",display:"flex",flexDirection:"column",gap:8}}>
-              {dayExercises.length>0&&(
-                <button onClick={finishWorkout} style={{width:"100%",background:"transparent",color:C.accentText,border:`1px solid ${C.accent}55`,borderRadius:3,padding:"12px",fontSize:13,fontWeight:700,letterSpacing:1.5,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",pointerEvents:"all"}}>
+              {workoutActive && dayExercises.length>0&&(
+                <button onClick={()=>{ stopWorkout(); finishWorkout(); }} style={{width:"100%",background:"transparent",color:C.accentText,border:`1px solid ${C.accent}55`,borderRadius:3,padding:"12px",fontSize:13,fontWeight:700,letterSpacing:1.5,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",pointerEvents:"all"}}>
                   ✅ FINALIZAR TREINO
                 </button>
               )}
