@@ -781,73 +781,153 @@ ${memoryLines.join("\n")}
       );
     }
 
-    // ── FLOATING WORKOUT BALL ──
-    function FloatingWorkoutBall({ workoutSeconds, workoutActive, onStop, onFinish }) {
-      const [mode, setMode]           = useState("stopwatch"); // "stopwatch" | "timer"
-      const [restSeconds, setRestSeconds] = useState(null);
-      const [restTotal,   setRestTotal]   = useState(null);
-      const [restAlarm,   setRestAlarm]   = useState(false);
-      const [expanded,    setExpanded]    = useState(false);
-      const [pos,         setPos]         = useState({ x: 20, y: 120 });
-      const dragging   = useRef(false);
-      const dragOffset = useRef({ x: 0, y: 0 });
-      const moved      = useRef(false);
-      const ballRef    = useRef(null);
+   // ── FLOATING WORKOUT BALL ──
+    // Bolinha flutuante: EXCLUSIVAMENTE temporizador de descanso
+    function FloatingWorkoutBall({ workoutActive, onStop, onFinish }) {
+      const [restSeconds,  setRestSeconds]  = useState(null);   // null = parado
+      const [restTotal,    setRestTotal]    = useState(60);      // último preset usado
+      const [restRunning,  setRestRunning]  = useState(false);   // contando ou pausado
+      const [restAlarm,    setRestAlarm]    = useState(false);   // tocou o alarme
+      const [expanded,     setExpanded]     = useState(false);
+      const [pos,          setPos]          = useState({ x: 20, y: 120 });
+      const dragging    = useRef(false);
+      const dragOffset  = useRef({ x: 0, y: 0 });
+      const movedPx     = useRef(0);          // acumula pixels movidos
+      const startPos    = useRef({ x: 0, y: 0 });
+      const ballRef     = useRef(null);
+      const workerRef   = useRef(null);
 
       const REST_PRESETS = [
         { label: "30s",  val: 30  },
         { label: "1min", val: 60  },
         { label: "90s",  val: 90  },
         { label: "2min", val: 120 },
+        { label: "3min", val: 180 },
       ];
 
-      // Timer regressivo
-      useEffect(() => {
-        if (restSeconds === null || restSeconds <= 0) return;
-        const t = setInterval(() => {
-          setRestSeconds(s => {
-            if (s <= 1) {
-              clearInterval(t);
-              try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch(e) {}
-              try {
-                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      // ── Web Worker para o temporizador de descanso (não throttle em background) ──
+      const startWorker = useCallback((seconds) => {
+        if (workerRef.current) { workerRef.current.terminate(); workerRef.current = null; }
+        const blob = new Blob([`
+          let s = 0;
+          const total = ${seconds};
+          self.onmessage = function(e) {
+            if (e.data === 'stop') { clearInterval(_t); self.close(); }
+          };
+          const _t = setInterval(function() {
+            s++;
+            const remaining = total - s;
+            self.postMessage({ remaining, done: remaining <= 0 });
+            if (remaining <= 0) { clearInterval(_t); }
+          }, 1000);
+        `], { type: 'application/javascript' });
+        const w = new Worker(URL.createObjectURL(blob));
+        workerRef.current = w;
+        w.onmessage = (e) => {
+          if (e.data.done) {
+            setRestSeconds(0);
+            setRestRunning(false);
+            workerRef.current = null;
+            try { navigator.vibrate && navigator.vibrate([300, 100, 300, 100, 300]); } catch(err) {}
+            try {
+              const ctx = new (window.AudioContext || window.webkitAudioContext)();
+              [0, 0.3, 0.6].forEach(t => {
                 const osc = ctx.createOscillator();
                 const gain = ctx.createGain();
                 osc.connect(gain); gain.connect(ctx.destination);
-                osc.frequency.value = 880; gain.gain.value = 0.3;
-                osc.start(); osc.stop(ctx.currentTime + 0.4);
-              } catch(e) {}
-              setRestAlarm(true);
-              setTimeout(() => { setRestAlarm(false); setRestSeconds(null); setRestTotal(null); }, 2500);
-              return 0;
-            }
-            return s - 1;
-          });
-        }, 1000);
-        return () => clearInterval(t);
-      }, [restSeconds !== null ? Math.ceil(restSeconds / 999) : -1]); // eslint-disable-line
+                osc.frequency.value = 880; gain.gain.value = 0.25;
+                osc.start(ctx.currentTime + t);
+                osc.stop(ctx.currentTime + t + 0.25);
+              });
+            } catch(err) {}
+            setRestAlarm(true);
+            setTimeout(() => setRestAlarm(false), 3000);
+          } else {
+            setRestSeconds(e.data.remaining);
+          }
+        };
+      }, []);
 
-      const startRest = (val) => {
-        setRestSeconds(val);
+      const stopWorker = useCallback(() => {
+        if (workerRef.current) {
+          workerRef.current.postMessage('stop');
+          workerRef.current.terminate();
+          workerRef.current = null;
+        }
+      }, []);
+
+      // Limpa worker ao desmontar ou ao parar treino
+      useEffect(() => {
+        if (!workoutActive) {
+          stopWorker();
+          setRestSeconds(null);
+          setRestRunning(false);
+          setRestAlarm(false);
+        }
+        return () => stopWorker();
+      }, [workoutActive, stopWorker]);
+
+      const handlePreset = (val) => {
+        stopWorker();
         setRestTotal(val);
+        setRestSeconds(val);
+        setRestRunning(true);
         setRestAlarm(false);
-        setMode("timer");
+        startWorker(val);
         setExpanded(false);
       };
 
-      // ── Drag com pointer events (touch + mouse) ──
+      const handlePlayPause = () => {
+        if (restAlarm) {
+          // limpa alarme, reseta
+          setRestAlarm(false);
+          setRestSeconds(null);
+          setRestRunning(false);
+          return;
+        }
+        if (restRunning) {
+          // PAUSA: mata o worker, mantém o tempo atual
+          stopWorker();
+          setRestRunning(false);
+        } else if (restSeconds !== null && restSeconds > 0) {
+          // RETOMA do ponto atual
+          setRestRunning(true);
+          startWorker(restSeconds);
+        } else {
+          // Sem timer ativo: abre o painel para escolher preset
+          setExpanded(true);
+        }
+      };
+
+      const handleReset = () => {
+        stopWorker();
+        setRestSeconds(restTotal);
+        setRestRunning(false);
+        setRestAlarm(false);
+      };
+
+      // ── Drag com pointer events — threshold de 8px para diferenciar tap de drag ──
+      const DRAG_THRESHOLD = 8;
+
       const onPointerDown = useCallback((e) => {
         e.preventDefault();
-        dragging.current = true;
-        moved.current     = false;
+        e.stopPropagation();
+        dragging.current  = false;
+        movedPx.current   = 0;
+        startPos.current  = { x: e.clientX, y: e.clientY };
         const rect = ballRef.current.getBoundingClientRect();
         dragOffset.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
         ballRef.current.setPointerCapture(e.pointerId);
       }, []);
 
       const onPointerMove = useCallback((e) => {
+        const dx = e.clientX - startPos.current.x;
+        const dy = e.clientY - startPos.current.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > DRAG_THRESHOLD) {
+          dragging.current = true;
+        }
         if (!dragging.current) return;
-        moved.current = true;
         const nx = e.clientX - dragOffset.current.x;
         const ny = e.clientY - dragOffset.current.y;
         const maxX = window.innerWidth  - 72;
@@ -856,35 +936,57 @@ ${memoryLines.join("\n")}
       }, []);
 
       const onPointerUp = useCallback((e) => {
-        if (!dragging.current) return;
-        dragging.current = false;
-        // Se não moveu → é clique → toggle expanded
-        if (!moved.current) {
+        e.preventDefault();
+        if (!dragging.current) {
+          // É tap — toggle expanded
           setExpanded(ex => !ex);
         }
-        moved.current = false;
+        dragging.current = false;
+        movedPx.current  = 0;
       }, []);
 
       const formatTime = (s) => {
-        const m = Math.floor(s / 60);
-        const sec = s % 60;
+        if (s === null) return "--:--";
+        const m = Math.floor(Math.max(0, s) / 60);
+        const sec = Math.max(0, s) % 60;
         return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
       };
 
-      const restPct  = (restTotal && restSeconds !== null) ? restSeconds / restTotal : 0;
-      const SIZE      = 68;
-      const STROKE    = 4;
-      const R         = (SIZE - STROKE * 2) / 2;
-      const CIRCUM    = 2 * Math.PI * R;
+      // Progresso para o anel SVG
+      const pct      = (restTotal > 0 && restSeconds !== null) ? restSeconds / restTotal : 0;
+      const SIZE     = 68;
+      const STROKE   = 4;
+      const R        = (SIZE - STROKE * 2) / 2;
+      const CIRCUM   = 2 * Math.PI * R;
 
       if (!workoutActive) return null;
+
+      // Cor do anel
+      const ringColor = restAlarm ? C.red
+        : restSeconds !== null && restSeconds <= 5 ? C.red
+        : C.accent;
+
+      // Ícone central
+      const centerIcon = restAlarm ? "🔔"
+        : restRunning ? "⏸"
+        : restSeconds !== null && restSeconds > 0 ? "▶"
+        : "⏱";
 
       return (
         <>
           <style>{`
-            @keyframes alarmRing{0%,100%{opacity:1}50%{opacity:0.3}}
-            @keyframes ballPop{0%{transform:scale(0.5);opacity:0}100%{transform:scale(1);opacity:1}}
+            @keyframes alarmRing { 0%,100%{opacity:1} 50%{opacity:0.2} }
+            @keyframes ballPop   { 0%{transform:scale(0.5);opacity:0} 100%{transform:scale(1);opacity:1} }
+            @keyframes ringPulse { 0%,100%{box-shadow:0 0 8px ${C.accent}55} 50%{box-shadow:0 0 20px ${C.accent}cc} }
           `}</style>
+
+          {/* OVERLAY para fechar painel */}
+          {expanded && (
+            <div
+              onPointerDown={() => setExpanded(false)}
+              style={{ position: "fixed", inset: 0, zIndex: 999 }}
+            />
+          )}
 
           {/* BOLINHA */}
           <div
@@ -902,175 +1004,165 @@ ${memoryLines.join("\n")}
               touchAction: "none",
               userSelect: "none",
               WebkitUserSelect: "none",
-              cursor: "grab",
-              animation: "ballPop 0.25s ease",
+              cursor: "pointer",
+              animation: "ballPop 0.2s ease",
             }}
           >
             {/* SVG anel de progresso */}
             <svg
               width={SIZE} height={SIZE}
               viewBox={`0 0 ${SIZE} ${SIZE}`}
-              style={{ position: "absolute", top: 0, left: 0, transform: "rotate(-90deg)" }}
+              style={{ position: "absolute", top: 0, left: 0, transform: "rotate(-90deg)", pointerEvents: "none" }}
             >
-              {/* track */}
-              <circle cx={SIZE/2} cy={SIZE/2} r={R} fill="none" stroke="rgba(200,255,62,0.15)" strokeWidth={STROKE} />
-              {/* progresso do timer */}
-              {mode === "timer" && restSeconds !== null && (
+              <circle cx={SIZE/2} cy={SIZE/2} r={R} fill="none" stroke="rgba(200,255,62,0.12)" strokeWidth={STROKE} />
+              {restSeconds !== null && (
                 <circle
                   cx={SIZE/2} cy={SIZE/2} r={R}
                   fill="none"
-                  stroke={restAlarm ? C.red : restSeconds <= 5 ? C.red : C.accent}
+                  stroke={ringColor}
                   strokeWidth={STROKE}
-                  strokeDasharray={`${CIRCUM * restPct} ${CIRCUM}`}
+                  strokeDasharray={`${CIRCUM * pct} ${CIRCUM}`}
                   strokeLinecap="round"
-                  style={{ transition: "stroke-dasharray 0.9s linear", animation: restAlarm ? "alarmRing 0.4s infinite" : "none" }}
-                />
-              )}
-              {/* progresso do cronômetro (voltas a cada 60s) */}
-              {mode === "stopwatch" && (
-                <circle
-                  cx={SIZE/2} cy={SIZE/2} r={R}
-                  fill="none"
-                  stroke={C.accent}
-                  strokeWidth={STROKE}
-                  strokeDasharray={`${CIRCUM * ((workoutSeconds % 60) / 60)} ${CIRCUM}`}
-                  strokeLinecap="round"
-                  style={{ transition: "stroke-dasharray 0.9s linear" }}
+                  style={{
+                    transition: restRunning ? "stroke-dasharray 0.85s linear" : "none",
+                    animation: restAlarm ? "alarmRing 0.5s infinite" : "none",
+                  }}
                 />
               )}
             </svg>
 
-            {/* Centro da bolinha */}
+            {/* Círculo central */}
             <div style={{
               position: "absolute", inset: STROKE * 2,
               borderRadius: "50%",
-              background: "rgba(8,10,6,0.95)",
-              border: `1px solid ${mode === "timer" && restAlarm ? C.red : C.accent}44`,
+              background: "rgba(8,10,6,0.96)",
+              border: `1px solid ${restAlarm ? C.red : C.accent}44`,
               display: "flex", flexDirection: "column",
               alignItems: "center", justifyContent: "center",
-              gap: 1,
-              boxShadow: `0 0 16px ${mode === "timer" && restAlarm ? C.red : C.accent}44`,
+              gap: 0,
+              boxShadow: restAlarm
+                ? `0 0 18px ${C.red}66`
+                : restRunning
+                  ? `0 0 14px ${C.accent}44`
+                  : `0 0 8px rgba(0,0,0,0.5)`,
+              animation: restAlarm ? "alarmRing 0.5s infinite" : restRunning ? "ringPulse 2s infinite" : "none",
+              pointerEvents: "none",
             }}>
-              {mode === "stopwatch" ? (
-                <>
-                  <span style={{ fontSize: 16, lineHeight: 1 }}>🕐</span>
-                  <span style={{ fontFamily: "'Oswald',Impact,sans-serif", fontSize: 12, fontWeight: 700, color: C.accent, letterSpacing: 1, lineHeight: 1 }}>
-                    {formatTime(workoutSeconds)}
-                  </span>
-                </>
-              ) : (
-                <>
-                  <span style={{ fontSize: restAlarm ? 16 : 14, lineHeight: 1, animation: restAlarm ? "alarmRing 0.4s infinite" : "none" }}>
-                    {restAlarm ? "🔔" : restSeconds !== null ? "⏳" : "⏱"}
-                  </span>
-                  <span style={{
-                    fontFamily: "'Oswald',Impact,sans-serif",
-                    fontSize: restSeconds !== null ? 12 : 11,
-                    fontWeight: 700,
-                    color: restAlarm ? C.red : restSeconds !== null ? (restSeconds <= 5 ? C.red : C.text) : C.muted2,
-                    letterSpacing: 1, lineHeight: 1,
-                  }}>
-                    {restSeconds !== null ? formatTime(restSeconds) : "--:--"}
-                  </span>
-                </>
-              )}
+              <span style={{ fontSize: 18, lineHeight: 1 }}>{centerIcon}</span>
+              <span style={{
+                fontFamily: "'Oswald',Impact,sans-serif",
+                fontSize: 11,
+                fontWeight: 700,
+                color: restAlarm ? C.red : restSeconds !== null && restSeconds <= 5 ? C.red : C.accent,
+                letterSpacing: 1,
+                lineHeight: 1,
+                marginTop: 2,
+              }}>
+                {formatTime(restSeconds)}
+              </span>
             </div>
           </div>
 
           {/* PAINEL EXPANDIDO */}
           {expanded && (
             <div
+              onPointerDown={e => e.stopPropagation()}
               style={{
                 position: "fixed",
-                left: Math.min(pos.x, window.innerWidth - 210),
-                top:  pos.y + SIZE + 8,
-                width: 200,
-                background: "rgba(8,10,6,0.97)",
+                left: Math.min(pos.x, window.innerWidth - 220),
+                top: pos.y + SIZE + 10,
+                width: 210,
+                background: "rgba(8,10,6,0.98)",
                 border: `1px solid ${C.accent}55`,
-                borderRadius: 8,
-                padding: "12px 10px",
+                borderRadius: 10,
+                padding: "14px 12px 12px",
                 zIndex: 1001,
-                boxShadow: `0 8px 32px rgba(0,0,0,0.8), 0 0 16px ${C.accent}22`,
+                boxShadow: `0 8px 32px rgba(0,0,0,0.85), 0 0 20px ${C.accent}22`,
               }}
             >
-              {/* Linha superior: trocar modo */}
-              <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-                <button
-                  onClick={() => setMode("stopwatch")}
-                  style={{
-                    flex: 1, padding: "7px 4px", borderRadius: 4,
-                    background: mode === "stopwatch" ? C.accentDim : "transparent",
-                    border: `1px solid ${mode === "stopwatch" ? C.accent : C.border}`,
-                    color: mode === "stopwatch" ? C.accent : C.muted2,
-                    fontSize: 11, fontWeight: 700, cursor: "pointer",
-                    fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: 1,
-                  }}
-                >⏱ CRONÔMETRO</button>
-                <button
-                  onClick={() => setMode("timer")}
-                  style={{
-                    flex: 1, padding: "7px 4px", borderRadius: 4,
-                    background: mode === "timer" ? C.accentDim : "transparent",
-                    border: `1px solid ${mode === "timer" ? C.accent : C.border}`,
-                    color: mode === "timer" ? C.accent : C.muted2,
-                    fontSize: 11, fontWeight: 700, cursor: "pointer",
-                    fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: 1,
-                  }}
-                >⬇ TEMPORIZADOR</button>
+              {/* Handle */}
+              <div style={{ width: 28, height: 3, borderRadius: 2, background: C.border, margin: "0 auto 12px" }} />
+
+              {/* Label */}
+              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.muted2, textTransform: "uppercase", marginBottom: 10 }}>
+                ⏱ DESCANSO
               </div>
 
-              {/* Presets de descanso */}
-              {mode === "timer" && (
-                <div style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: C.muted2, textTransform: "uppercase", marginBottom: 6 }}>DESCANSO</div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5 }}>
-                    {REST_PRESETS.map(p => (
-                      <button
-                        key={p.val}
-                        onClick={() => startRest(p.val)}
-                        style={{
-                          padding: "9px 4px", borderRadius: 3,
-                          background: restTotal === p.val && restSeconds !== null ? C.accentDim : "#0a0c08",
-                          border: `1px solid ${restTotal === p.val && restSeconds !== null ? C.accent : C.border}`,
-                          color: restTotal === p.val && restSeconds !== null ? C.accent : C.muted2,
-                          fontSize: 12, fontWeight: 700, cursor: "pointer",
-                          fontFamily: "'Barlow Condensed',sans-serif",
-                        }}
-                      >{p.label}</button>
-                    ))}
-                  </div>
-                  {restSeconds !== null && (
-                    <button
-                      onClick={() => { setRestSeconds(null); setRestTotal(null); setRestAlarm(false); }}
-                      style={{
-                        width: "100%", marginTop: 5, padding: "7px",
-                        background: "transparent", border: `1px solid ${C.border}`,
-                        color: C.muted2, borderRadius: 3, fontSize: 11, fontWeight: 700,
-                        cursor: "pointer", fontFamily: "'Barlow Condensed',sans-serif",
-                      }}
-                    >✕ CANCELAR</button>
-                  )}
+              {/* PRESETS */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 10 }}>
+                {REST_PRESETS.map(p => (
+                  <button
+                    key={p.val}
+                    onPointerDown={e => { e.stopPropagation(); handlePreset(p.val); }}
+                    style={{
+                      padding: "11px 4px",
+                      borderRadius: 4,
+                      background: restTotal === p.val && restSeconds !== null ? C.accentDim : "#0d100b",
+                      border: `1px solid ${restTotal === p.val && restSeconds !== null ? C.accent : C.border}`,
+                      color: restTotal === p.val && restSeconds !== null ? C.accent : C.muted2,
+                      fontSize: 13,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      fontFamily: "'Barlow Condensed',sans-serif",
+                    }}
+                  >{p.label}</button>
+                ))}
+              </div>
+
+              {/* PLAY/PAUSE + RESET */}
+              {restSeconds !== null && (
+                <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+                  <button
+                    onPointerDown={e => { e.stopPropagation(); handlePlayPause(); }}
+                    style={{
+                      flex: 2,
+                      padding: "10px",
+                      borderRadius: 4,
+                      background: restRunning ? C.redDim : C.accentDim,
+                      border: `1px solid ${restRunning ? C.red + "55" : C.accent + "55"}`,
+                      color: restRunning ? C.red : C.accentText,
+                      fontSize: 13,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      fontFamily: "'Barlow Condensed',sans-serif",
+                    }}
+                  >{restRunning ? "⏸ PAUSAR" : "▶ RETOMAR"}</button>
+                  <button
+                    onPointerDown={e => { e.stopPropagation(); handleReset(); }}
+                    style={{
+                      flex: 1,
+                      padding: "10px",
+                      borderRadius: 4,
+                      background: "transparent",
+                      border: `1px solid ${C.border}`,
+                      color: C.muted2,
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      fontFamily: "'Barlow Condensed',sans-serif",
+                    }}
+                  >↺</button>
                 </div>
               )}
 
-              {/* Divisor */}
-              <div style={{ height: 1, background: C.border, margin: "6px 0 10px" }} />
+              {/* DIVISOR */}
+              <div style={{ height: 1, background: C.border, margin: "4px 0 10px" }} />
 
-              {/* Ações do treino */}
+              {/* AÇÕES DO TREINO */}
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 <button
-                  onClick={() => { setExpanded(false); onFinish(); }}
+                  onPointerDown={e => { e.stopPropagation(); setExpanded(false); onFinish(); }}
                   style={{
-                    width: "100%", padding: "9px", borderRadius: 3,
+                    width: "100%", padding: "9px", borderRadius: 4,
                     background: C.accentDim, border: `1px solid ${C.accent}55`,
                     color: C.accentText, fontSize: 12, fontWeight: 700,
                     cursor: "pointer", fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: 1,
                   }}
                 >✅ FINALIZAR TREINO</button>
                 <button
-                  onClick={() => { setExpanded(false); onStop(); }}
+                  onPointerDown={e => { e.stopPropagation(); setExpanded(false); onStop(); }}
                   style={{
-                    width: "100%", padding: "9px", borderRadius: 3,
+                    width: "100%", padding: "9px", borderRadius: 4,
                     background: C.redDim, border: `1px solid ${C.red}44`,
                     color: C.red, fontSize: 12, fontWeight: 700,
                     cursor: "pointer", fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: 1,
@@ -1078,14 +1170,6 @@ ${memoryLines.join("\n")}
                 >■ ENCERRAR SEM SALVAR</button>
               </div>
             </div>
-          )}
-
-          {/* Overlay para fechar painel ao clicar fora */}
-          {expanded && (
-            <div
-              onClick={() => setExpanded(false)}
-              style={{ position: "fixed", inset: 0, zIndex: 999 }}
-            />
           )}
         </>
       );
@@ -2033,7 +2117,6 @@ ${memoryLines.join("\n")}
             {/* BOLINHA FLUTUANTE — aparece apenas com treino ativo */}
             <FloatingWorkoutBall
               workoutActive={workoutActive}
-              workoutSeconds={workoutSeconds}
               onStop={stopWorkout}
               onFinish={()=>{ stopWorkout(); finishWorkout(); }}
             />
