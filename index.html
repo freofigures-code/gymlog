@@ -1236,7 +1236,6 @@ ${memoryLines.join("\n")}
           setAvatarInput(profile.avatar||"");
         }
       },[profile]);
-      useEffect(()=>{ if(!timerRunning)return; const t=setInterval(()=>setTimerSeconds(s=>s+1),1000); return()=>clearInterval(t); },[timerRunning]);
       // Cronômetro geral do treino — Web Worker para não throttle em background
       const workerRef = useRef(null);
       const wakeLockRef = useRef(null);
