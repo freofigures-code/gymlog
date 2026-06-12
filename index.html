@@ -629,6 +629,7 @@
       const [avatarInput,setAvatarInput]=useState("");
       const [quickMenuOpen,setQuickMenuOpen]=useState(false);
       const avatarRef=useRef(null);
+      const menuRef=useRef(null);
       const chatEndRef=useRef(null);
       const currentWeekKey=getWeekKey(todayISO());
       const currentPhotos=weekPhotos[currentWeekKey]||{};
@@ -659,6 +660,17 @@
 
       useEffect(()=>{const today=todayISO();if(feelings[today]){setTodayEnergy(feelings[today].energy||null);setTodayResult(feelings[today].result||null);}else{setTodayEnergy(null);setTodayResult(null);}},[feelings]);
       useEffect(()=>{if(chatEndRef.current)chatEndRef.current.scrollIntoView({behavior:"smooth"});},[chatMessages]);
+
+      useEffect(()=>{
+        if(!menuOpen)return;
+        const handler=(e)=>{
+          if(menuRef.current&&!menuRef.current.contains(e.target)){
+            setMenuOpen(false);
+          }
+        };
+        document.addEventListener("pointerdown",handler,true);
+        return()=>document.removeEventListener("pointerdown",handler,true);
+      },[menuOpen]);
 
       const loadAll=async()=>{
         try{const[w,h,f,p,prof]=await Promise.all([db.getWorkouts(user.id),db.getHistory(user.id),db.getFeelings(user.id),db.getPhotos(user.id),db.getProfile(user.id)]);setWorkouts(w);setHistory(h);setFeelings(f);setWeekPhotos(p);setProfile(prof);const today=todayISO();if(f[today]){setTodayEnergy(f[today].energy||null);setTodayResult(f[today].result||null);}}catch(e){console.error(e);}
@@ -1178,11 +1190,11 @@
                   {saving&&<div style={{fontSize:10,color:C.accentText,fontWeight:700,letterSpacing:1}}>✓ SALVO</div>}
                   {showMigrate&&(<button onClick={runMigration} disabled={migrating} style={{background:"#1a1208",border:`1px solid #fb923c66`,color:"#fb923c",borderRadius:10,padding:"7px 10px",fontSize:10,fontWeight:700,cursor:migrating?"default":"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>{migrating?"...":"⬆ MIGRAR"}</button>)}
                   <button style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:10,padding:"7px 10px",fontSize:10,fontWeight:700,color:C.muted2,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}} onClick={()=>setBottomTab("analises")}>📋 HISTÓRICO</button>
-                  <div style={{position:"relative"}}>
-                    <button onClick={(e)=>{e.stopPropagation();setMenuOpen(o=>!o);}} style={{width:34,height:34,borderRadius:10,background:avatarInput?"transparent":C.accentDim,border:`1px solid ${C.accent}55`,color:C.accent,fontSize:14,fontWeight:800,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Oswald',sans-serif",overflow:"hidden",padding:0}}>
+                  <div ref={menuRef} style={{position:"relative"}}>
+                    <button onClick={()=>setMenuOpen(o=>!o)} style={{width:34,height:34,borderRadius:10,background:avatarInput?"transparent":C.accentDim,border:`1px solid ${C.accent}55`,color:C.accent,fontSize:14,fontWeight:800,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Oswald',sans-serif",overflow:"hidden",padding:0}}>
                       {avatarInput?<img src={`data:image/jpeg;base64,${avatarInput}`} style={{width:"100%",height:"100%",objectFit:"cover",pointerEvents:"none"}} />:<span style={{fontWeight:700,pointerEvents:"none"}}>{initials}</span>}
                     </button>
-                    {menuOpen&&(<div onClick={(e)=>e.stopPropagation()} style={{position:"fixed",top:70,right:16,background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:14,padding:"6px 0",minWidth:200,zIndex:300,boxShadow:"0 8px 32px rgba(0,0,0,0.8)"}}>
+                    {menuOpen&&(<div style={{position:"fixed",top:70,right:16,background:C.bgCard,border:`1px solid ${C.border}`,borderRadius:14,padding:"6px 0",minWidth:200,zIndex:300,boxShadow:"0 8px 32px rgba(0,0,0,0.8)"}}>
                       <div style={{padding:"10px 16px 10px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:10}}>
                         <div style={{width:36,height:36,borderRadius:8,background:avatarInput?`url(data:image/jpeg;base64,${avatarInput}) center/cover`:C.accentDim,border:`1px solid ${C.accent}44`,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",flexShrink:0}}>
                           {!avatarInput&&<span style={{fontFamily:"'Oswald',sans-serif",fontSize:16,fontWeight:700,color:C.accent}}>{initials}</span>}
@@ -1193,11 +1205,11 @@
                         </div>
                       </div>
                       <button onClick={()=>{setMenuOpen(false);setBottomTab("perfil");}} style={{width:"100%",background:"transparent",border:"none",color:C.text,fontSize:13,fontWeight:700,padding:"11px 16px",cursor:"pointer",textAlign:"left",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,display:"flex",alignItems:"center",gap:10}}>
-                        <span style={{fontSize:15}}>👤</span> VER PERFIL
+                        <span style={{fontSize:15,pointerEvents:"none"}}>👤</span> VER PERFIL
                       </button>
                       <div style={{height:1,background:C.border,margin:"0 12px"}} />
-                      <button onClick={async()=>{setMenuOpen(false);await sb.auth.signOut();}} style={{width:"100%",background:"transparent",border:"none",color:C.red,fontSize:13,fontWeight:700,padding:"11px 16px",cursor:"pointer",textAlign:"left",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,display:"flex",alignItems:"center",gap:10}}>
-                        <span style={{fontSize:15}}>🚪</span> SAIR DA CONTA
+                      <button onClick={()=>{setMenuOpen(false);sb.auth.signOut();}} style={{width:"100%",background:"transparent",border:"none",color:C.red,fontSize:13,fontWeight:700,padding:"11px 16px",cursor:"pointer",textAlign:"left",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,display:"flex",alignItems:"center",gap:10}}>
+                        <span style={{fontSize:15,pointerEvents:"none"}}>🚪</span> SAIR DA CONTA
                       </button>
                     </div>)}
                   </div>
@@ -1300,7 +1312,6 @@
               </div>
             </div>
           </div>
-          {menuOpen&&<div onClick={()=>setMenuOpen(false)} style={{position:"fixed",inset:0,zIndex:150}} />}
           {renderModals()}
           <BottomNav active={bottomTab} onChange={(tab)=>{setQuickMenuOpen(false);setMenuOpen(false);setBottomTab(tab);}} onPlusClick={()=>setQuickMenuOpen(true)} />
         </div>
