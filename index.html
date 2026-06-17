@@ -19,7 +19,12 @@
   </style>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"></script>
+<script>
+  Babel.registerPreset("app-preset", {
+    presets: [[Babel.availablePresets["react"], { runtime: "classic" }]]
+  });
+</script>
   <script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 </head>
 <body>
@@ -37,7 +42,7 @@
     window._sb = supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON);
   </script>
 
-  <script type="text/babel">
+  <script type="text/babel" data-presets="app-preset">
     const { useState, useEffect, useRef, useCallback } = React;
     const sb = window._sb;
 
