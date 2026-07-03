@@ -234,6 +234,42 @@
       async removePhoto(userId, weekKey, slot) {
         await sb.from("week_photos").update({[slot+"_photo"]:null}).eq("user_id",userId).eq("week_key",weekKey);
       },
+      async getActiveSession(userId) {
+        const {data,error} = await sb.from("active_sessions").select("*").eq("user_id",userId).single();
+        if (error) return null;
+        return data;
+      },
+      async startActiveSession(userId, dayKey) {
+        const startedAt = new Date().toISOString();
+        await sb.from("active_sessions").upsert({
+          user_id: userId,
+          day_key: dayKey,
+          workout_started_at: startedAt,
+          rest_started_at: null,
+          rest_duration_seconds: null,
+          updated_at: startedAt,
+        }, {onConflict:"user_id"});
+        return startedAt;
+      },
+      async startRest(userId, durationSeconds) {
+        const startedAt = new Date().toISOString();
+        await sb.from("active_sessions").update({
+          rest_started_at: startedAt,
+          rest_duration_seconds: durationSeconds,
+          updated_at: startedAt,
+        }).eq("user_id",userId);
+        return startedAt;
+      },
+      async clearRest(userId) {
+        await sb.from("active_sessions").update({
+          rest_started_at: null,
+          rest_duration_seconds: null,
+          updated_at: new Date().toISOString(),
+        }).eq("user_id",userId);
+      },
+      async endActiveSession(userId) {
+        await sb.from("active_sessions").delete().eq("user_id",userId);
+      },
       async getProfile(userId) {
         const {data} = await sb.from("profiles").select("display_name,email,weight,height,avatar").eq("id",userId).single(); return data;
       },
@@ -508,7 +544,7 @@
       );
     }
 
-    function FloatingWorkoutBall({workoutActive}) {
+    function FloatingWorkoutBall({workoutActive, userId, restoredSession}) {
       const [restSeconds,setRestSeconds]=useState(null);
       const [restTotal,setRestTotal]=useState(60);
       const [restRunning,setRestRunning]=useState(false);
@@ -521,11 +557,12 @@
       const startPos=useRef({x:0,y:0});
       const ballRef=useRef(null);
       const workerRef=useRef(null);
+      const restoreAppliedRef=useRef(false);
       const REST_PRESETS=[{label:"30s",val:30},{label:"1min",val:60},{label:"90s",val:90},{label:"2min",val:120},{label:"3min",val:180}];
 
-      const startWorker=useCallback((seconds)=>{
+      const startWorker=useCallback((seconds, startTsOverride)=>{
         if(workerRef.current){workerRef.current.terminate();workerRef.current=null;}
-        const startTs = Date.now();
+        const startTs = startTsOverride || Date.now();
         const blob=new Blob([`
           const total = ${seconds};
           const startTs = ${startTs};
@@ -539,26 +576,66 @@
         const w=new Worker(URL.createObjectURL(blob));
         workerRef.current=w;
         w.onmessage=(e)=>{
-          if(e.data.done){setRestSeconds(0);setRestRunning(false);workerRef.current=null;try{navigator.vibrate&&navigator.vibrate([300,100,300,100,300]);}catch(err){}try{const ctx=new(window.AudioContext||window.webkitAudioContext)();[0,0.3,0.6].forEach(t=>{const osc=ctx.createOscillator();const gain=ctx.createGain();osc.connect(gain);gain.connect(ctx.destination);osc.frequency.value=880;gain.gain.value=0.25;osc.start(ctx.currentTime+t);osc.stop(ctx.currentTime+t+0.25);});}catch(err){}setRestAlarm(true);setTimeout(()=>setRestAlarm(false),3000);}
+          if(e.data.done){
+            setRestSeconds(0);setRestRunning(false);workerRef.current=null;
+            if(userId) db.clearRest(userId);
+            try{navigator.vibrate&&navigator.vibrate([300,100,300,100,300]);}catch(err){}
+            try{const ctx=new(window.AudioContext||window.webkitAudioContext)();[0,0.3,0.6].forEach(t=>{const osc=ctx.createOscillator();const gain=ctx.createGain();osc.connect(gain);gain.connect(ctx.destination);osc.frequency.value=880;gain.gain.value=0.25;osc.start(ctx.currentTime+t);osc.stop(ctx.currentTime+t+0.25);});}catch(err){}
+            setRestAlarm(true);setTimeout(()=>setRestAlarm(false),3000);
+          }
           else{setRestSeconds(e.data.remaining);}
         };
-      },[]);
+      },[userId]);
 
       const stopWorker=useCallback(()=>{if(workerRef.current){workerRef.current.postMessage('stop');workerRef.current.terminate();workerRef.current=null;}},[]);
 
       useEffect(()=>{
-        if(!workoutActive){stopWorker();setRestSeconds(null);setRestRunning(false);setRestAlarm(false);}
+        if(!workoutActive){stopWorker();setRestSeconds(null);setRestRunning(false);setRestAlarm(false);restoreAppliedRef.current=false;}
         return()=>stopWorker();
       },[workoutActive,stopWorker]);
 
-      const handlePreset=(val)=>{stopWorker();setRestTotal(val);setRestSeconds(val);setRestRunning(true);setRestAlarm(false);startWorker(val);setExpanded(false);};
+      // Aplica a sessão de descanso vinda do servidor (uma única vez, quando workoutActive liga).
+      useEffect(()=>{
+        if(!workoutActive || !restoredSession || restoreAppliedRef.current) return;
+        restoreAppliedRef.current = true;
+        const startTs = new Date(restoredSession.startedAt).getTime();
+        const elapsed = Math.floor((Date.now() - startTs) / 1000);
+        const remaining = restoredSession.duration - elapsed;
+        if (remaining <= 0) {
+          if(userId) db.clearRest(userId);
+          return;
+        }
+        setRestTotal(restoredSession.duration);
+        setRestSeconds(remaining);
+        setRestRunning(true);
+        startWorker(restoredSession.duration, startTs);
+      },[workoutActive, restoredSession, startWorker, userId]);
+
+      const handlePreset=(val)=>{
+        stopWorker();setRestTotal(val);setRestSeconds(val);setRestRunning(true);setRestAlarm(false);
+        startWorker(val);setExpanded(false);
+        if(userId) db.startRest(userId, val);
+      };
       const handlePlayPause=()=>{
-        if(restAlarm){setRestAlarm(false);setRestSeconds(null);setRestRunning(false);return;}
-        if(restRunning){stopWorker();setRestRunning(false);}
-        else if(restSeconds!==null&&restSeconds>0){setRestRunning(true);startWorker(restSeconds);}
+        if(restAlarm){
+          setRestAlarm(false);setRestSeconds(null);setRestRunning(false);
+          if(userId) db.clearRest(userId);
+          return;
+        }
+        if(restRunning){
+          stopWorker();setRestRunning(false);
+          if(userId) db.clearRest(userId);
+        }
+        else if(restSeconds!==null&&restSeconds>0){
+          setRestRunning(true);startWorker(restSeconds);
+          if(userId) db.startRest(userId, restSeconds);
+        }
         else{setExpanded(true);}
       };
-      const handleReset=()=>{stopWorker();setRestSeconds(restTotal);setRestRunning(false);setRestAlarm(false);};
+      const handleReset=()=>{
+        stopWorker();setRestSeconds(restTotal);setRestRunning(false);setRestAlarm(false);
+        if(userId) db.clearRest(userId);
+      };
 
       const DRAG_THRESHOLD=8;
       const onPointerDown=useCallback((e)=>{e.preventDefault();e.stopPropagation();dragging.current=false;movedPx.current=0;startPos.current={x:e.clientX,y:e.clientY};const rect=ballRef.current.getBoundingClientRect();dragOffset.current={x:e.clientX-rect.left,y:e.clientY-rect.top};ballRef.current.setPointerCapture(e.pointerId);},[]);
@@ -631,8 +708,10 @@
       const [menuOpen,setMenuOpen]=useState(false);
       const [workoutActive,setWorkoutActive]=useState(false);
       const [workoutSeconds,setWorkoutSeconds]=useState(0);
+      const [workoutStartedAt,setWorkoutStartedAt]=useState(null);
       const [motiveBanner,setMotiveBanner]=useState("");
       const [motiveVisible,setMotiveVisible]=useState(false);
+      const [restoredRestSession,setRestoredRestSession]=useState(null);
       const [showMigrate,setShowMigrate]=useState(false);
       const [migrating,setMigrating]=useState(false);
       const [editingName,setEditingName]=useState(false);
@@ -651,16 +730,23 @@
 
       useEffect(()=>{const hasLocal=localStorage.getItem("gymlog-workouts-v1")||localStorage.getItem("gymlog-history-v1")||localStorage.getItem("gymlog-feelings-v1")||localStorage.getItem("gymlog-photos-v1");if(hasLocal)setShowMigrate(true);},[]);
 
-      // Restaura treino em andamento se o processo foi recarregado (Android matou o app
-      // em segundo plano) enquanto havia um treino ativo. Só roda uma vez, no mount.
+      // Restaura sessão ativa (treino + descanso) a partir do Supabase.
+      // Funciona mesmo se o processo tiver sido reiniciado, o app fechado,
+      // ou o acesso ter vindo de outro aparelho — a verdade mora no banco.
       useEffect(()=>{
-        const savedDay = localStorage.getItem('ironlog-workout-active-day');
-        const savedTs = Number(localStorage.getItem('ironlog-workout-start'));
-        if (savedDay && savedTs && !Number.isNaN(savedTs)) {
-          setActiveDay(savedDay);
+        (async()=>{
+          const session = await db.getActiveSession(user.id);
+          if (!session) return;
+          setActiveDay(session.day_key);
           setWorkoutActive(true);
-          setWorkoutSeconds(Math.max(0, Math.floor((Date.now() - savedTs) / 1000)));
-        }
+          setWorkoutStartedAt(session.workout_started_at);
+          if (session.rest_started_at && session.rest_duration_seconds) {
+            setRestoredRestSession({
+              startedAt: session.rest_started_at,
+              duration: session.rest_duration_seconds,
+            });
+          }
+        })();
       },[]);
 
       const runMigration=async()=>{
@@ -675,17 +761,12 @@
       const workerRef=useRef(null);
       const wakeLockRef=useRef(null);
       useEffect(()=>{
-        if(!workoutActive){
+        if(!workoutActive || !workoutStartedAt){
           if(workerRef.current){workerRef.current.terminate();workerRef.current=null;}
           if(wakeLockRef.current){try{wakeLockRef.current.release();}catch(e){}wakeLockRef.current=null;}
           return;
         }
-        // startTs vem do estado persistido (setado em startWorkout/restauração) — nunca criado aqui.
-        const startTs = Number(localStorage.getItem('ironlog-workout-start')) || Date.now();
-        if (!localStorage.getItem('ironlog-workout-start')) {
-          localStorage.setItem('ironlog-workout-start', String(startTs));
-        }
-        // Sincroniza o valor exibido imediatamente a partir do timestamp real.
+        const startTs = new Date(workoutStartedAt).getTime();
         setWorkoutSeconds(Math.max(0, Math.floor((Date.now() - startTs) / 1000)));
 
         const blob=new Blob([`
@@ -702,14 +783,13 @@
         if('wakeLock'in navigator){navigator.wakeLock.request('screen').then(lock=>{wakeLockRef.current=lock;}).catch(()=>{});}
         const handleVisibility=()=>{
           if(document.visibilityState==='visible'){
-            const savedTs = Number(localStorage.getItem('ironlog-workout-start'));
-            if (savedTs) setWorkoutSeconds(Math.max(0, Math.floor((Date.now() - savedTs) / 1000)));
+            setWorkoutSeconds(Math.max(0, Math.floor((Date.now() - startTs) / 1000)));
             if('wakeLock'in navigator){navigator.wakeLock.request('screen').then(lock=>{wakeLockRef.current=lock;}).catch(()=>{});}
           }
         };
         document.addEventListener('visibilitychange',handleVisibility);
         return()=>{w.terminate();workerRef.current=null;document.removeEventListener('visibilitychange',handleVisibility);};
-      },[workoutActive]);
+      },[workoutActive, workoutStartedAt]);
       useEffect(()=>{const today=todayISO();if(feelings[today]){setTodayEnergy(feelings[today].energy||null);setTodayResult(feelings[today].result||null);}else{setTodayEnergy(null);setTodayResult(null);}},[feelings]);
       useEffect(()=>{if(chatEndRef.current)chatEndRef.current.scrollIntoView({behavior:"smooth"});},[chatMessages]);
 
@@ -736,17 +816,15 @@
       const finishWorkout=()=>{const exs=workouts[activeDay]||[];if(exs.length===0)return;if(!todayEnergy)setModal("energy_then_result");else setModal("result");};
 
       const startWorkout=async()=>{
-        const startTs = Date.now();
-        localStorage.setItem('ironlog-workout-start', String(startTs));
-        localStorage.setItem('ironlog-workout-active-day', activeDay);
+        const startedAt = await db.startActiveSession(user.id, activeDay);
+        setWorkoutStartedAt(startedAt);
         setWorkoutActive(true);setWorkoutSeconds(0);setMotiveBanner("");setMotiveVisible(false);
         const lastWeek=history.filter(h=>h.day===activeDay);if(lastWeek.length===0)return;const lastEntry=lastWeek[0];
         try{const apiUrl=window.AI_API_URL;const exerciseSummary=lastEntry.exercises.map(ex=>{const maxW=Math.max(...ex.sets.map(s=>s.weight));return`${ex.name}: ${ex.sets.length} séries, carga máx ${maxW}kg`;}).join("; ");const res=await fetch(apiUrl+"analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({system:"Você é um personal trainer motivacional. Gere UMA frase curta (máx 15 palavras) e motivadora comparando com o treino anterior. Seja direto e incisivo. Responda APENAS a frase, sem aspas.",messages:[{role:"user",content:`Treino anterior (${lastEntry.date}): ${exerciseSummary}. Gere uma frase motivacional para o treino de hoje.`}]})});if(!res.ok)return;const data=await res.json();const text=data.content&&data.content[0]?data.content[0].text.trim():"";if(text){setMotiveBanner(text);setMotiveVisible(true);setTimeout(()=>setMotiveVisible(false),6000);}}catch(e){}
       };
-      const stopWorkout=()=>{
-        setWorkoutActive(false);setWorkoutSeconds(0);setMotiveVisible(false);
-        localStorage.removeItem('ironlog-workout-start');
-        localStorage.removeItem('ironlog-workout-active-day');
+      const stopWorkout=async()=>{
+        setWorkoutActive(false);setWorkoutSeconds(0);setWorkoutStartedAt(null);setMotiveVisible(false);setRestoredRestSession(null);
+        await db.endActiveSession(user.id);
       };
       const formatWorkoutTime=(s)=>{const h=Math.floor(s/3600);const m=Math.floor((s%3600)/60);const sec=s%60;if(h>0)return`${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;return`${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;};
 
@@ -1139,7 +1217,7 @@
                 </div>
               )}
             </div>
-            <FloatingWorkoutBall workoutActive={workoutActive} />
+            <FloatingWorkoutBall workoutActive={workoutActive} userId={user.id} restoredSession={restoredRestSession} />
             {renderModals()}
             <BottomNav active={bottomTab} onChange={(tab)=>{setQuickMenuOpen(false);setMenuOpen(false);setBottomTab(tab);}} onPlusClick={()=>setQuickMenuOpen(true)} />
           </div>
