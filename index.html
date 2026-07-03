@@ -525,7 +525,17 @@
 
       const startWorker=useCallback((seconds)=>{
         if(workerRef.current){workerRef.current.terminate();workerRef.current=null;}
-        const blob=new Blob([`let s=0;const total=${seconds};self.onmessage=function(e){if(e.data==='stop'){clearInterval(_t);self.close();}};const _t=setInterval(function(){s++;const remaining=total-s;self.postMessage({remaining,done:remaining<=0});if(remaining<=0){clearInterval(_t);}},1000);`],{type:'application/javascript'});
+        const startTs = Date.now();
+        const blob=new Blob([`
+          const total = ${seconds};
+          const startTs = ${startTs};
+          const _t = setInterval(function(){
+            const elapsedSec = Math.floor((Date.now() - startTs) / 1000);
+            const remaining = total - elapsedSec;
+            self.postMessage({ remaining: Math.max(0, remaining), done: remaining <= 0 });
+            if (remaining <= 0) { clearInterval(_t); }
+          }, 1000);
+        `],{type:'application/javascript'});
         const w=new Worker(URL.createObjectURL(blob));
         workerRef.current=w;
         w.onmessage=(e)=>{
@@ -641,6 +651,18 @@
 
       useEffect(()=>{const hasLocal=localStorage.getItem("gymlog-workouts-v1")||localStorage.getItem("gymlog-history-v1")||localStorage.getItem("gymlog-feelings-v1")||localStorage.getItem("gymlog-photos-v1");if(hasLocal)setShowMigrate(true);},[]);
 
+      // Restaura treino em andamento se o processo foi recarregado (Android matou o app
+      // em segundo plano) enquanto havia um treino ativo. Só roda uma vez, no mount.
+      useEffect(()=>{
+        const savedDay = localStorage.getItem('ironlog-workout-active-day');
+        const savedTs = Number(localStorage.getItem('ironlog-workout-start'));
+        if (savedDay && savedTs && !Number.isNaN(savedTs)) {
+          setActiveDay(savedDay);
+          setWorkoutActive(true);
+          setWorkoutSeconds(Math.max(0, Math.floor((Date.now() - savedTs) / 1000)));
+        }
+      },[]);
+
       const runMigration=async()=>{
         if(migrating)return;setMigrating(true);
         try{const rawW=localStorage.getItem("gymlog-workouts-v1");if(rawW){const wData=JSON.parse(rawW);for(const dayKey of Object.keys(wData)){if(wData[dayKey]&&wData[dayKey].length>0)await db.saveWorkout(user.id,dayKey,wData[dayKey]);}}const rawH=localStorage.getItem("gymlog-history-v1");if(rawH){const hData=JSON.parse(rawH);for(const entry of hData)await db.saveHistory(user.id,entry.date,entry.day,entry.exercises);}const rawF=localStorage.getItem("gymlog-feelings-v1");if(rawF){const fData=JSON.parse(rawF);for(const date of Object.keys(fData)){const f=fData[date];await db.saveFeeling(user.id,date,f.energy||null,f.result||null);}}const rawP=localStorage.getItem("gymlog-photos-v1");if(rawP){const pData=JSON.parse(rawP);for(const weekKey of Object.keys(pData)){const photos=pData[weekKey];if(photos.front)await db.savePhoto(user.id,weekKey,"front",photos.front);if(photos.side)await db.savePhoto(user.id,weekKey,"side",photos.side);if(photos.back)await db.savePhoto(user.id,weekKey,"back",photos.back);}}localStorage.removeItem("gymlog-workouts-v1");localStorage.removeItem("gymlog-history-v1");localStorage.removeItem("gymlog-feelings-v1");localStorage.removeItem("gymlog-photos-v1");setShowMigrate(false);await loadAll();alert("✅ Dados migrados com sucesso!");}catch(e){alert("❌ Erro na migração: "+e.message);}
@@ -653,16 +675,41 @@
       const workerRef=useRef(null);
       const wakeLockRef=useRef(null);
       useEffect(()=>{
-        if(!workoutActive){if(workerRef.current){workerRef.current.terminate();workerRef.current=null;}if(wakeLockRef.current){try{wakeLockRef.current.release();}catch(e){}wakeLockRef.current=null;}return;}
-        const blob=new Blob([`let s=0;self.onmessage=function(e){if(e.data==='reset')s=0;};setInterval(function(){s++;self.postMessage(s);},1000);`],{type:'application/javascript'});
+        if(!workoutActive){
+          if(workerRef.current){workerRef.current.terminate();workerRef.current=null;}
+          if(wakeLockRef.current){try{wakeLockRef.current.release();}catch(e){}wakeLockRef.current=null;}
+          return;
+        }
+        // startTs vem do estado persistido (setado em startWorkout/restauração) — nunca criado aqui.
+        const startTs = Number(localStorage.getItem('ironlog-workout-start')) || Date.now();
+        if (!localStorage.getItem('ironlog-workout-start')) {
+          localStorage.setItem('ironlog-workout-start', String(startTs));
+        }
+        // Sincroniza o valor exibido imediatamente a partir do timestamp real.
+        setWorkoutSeconds(Math.max(0, Math.floor((Date.now() - startTs) / 1000)));
+
+        const blob=new Blob([`
+          const startTs = ${startTs};
+          function tick(){
+            const elapsed = Math.floor((Date.now() - startTs) / 1000);
+            self.postMessage(elapsed);
+          }
+          setInterval(tick, 1000);
+        `],{type:'application/javascript'});
         const w=new Worker(URL.createObjectURL(blob));
         w.onmessage=(e)=>setWorkoutSeconds(e.data);workerRef.current=w;
+
         if('wakeLock'in navigator){navigator.wakeLock.request('screen').then(lock=>{wakeLockRef.current=lock;}).catch(()=>{});}
-        const handleVisibility=()=>{if(document.visibilityState==='visible'&&'wakeLock'in navigator){navigator.wakeLock.request('screen').then(lock=>{wakeLockRef.current=lock;}).catch(()=>{});}};
+        const handleVisibility=()=>{
+          if(document.visibilityState==='visible'){
+            const savedTs = Number(localStorage.getItem('ironlog-workout-start'));
+            if (savedTs) setWorkoutSeconds(Math.max(0, Math.floor((Date.now() - savedTs) / 1000)));
+            if('wakeLock'in navigator){navigator.wakeLock.request('screen').then(lock=>{wakeLockRef.current=lock;}).catch(()=>{});}
+          }
+        };
         document.addEventListener('visibilitychange',handleVisibility);
         return()=>{w.terminate();workerRef.current=null;document.removeEventListener('visibilitychange',handleVisibility);};
       },[workoutActive]);
-
       useEffect(()=>{const today=todayISO();if(feelings[today]){setTodayEnergy(feelings[today].energy||null);setTodayResult(feelings[today].result||null);}else{setTodayEnergy(null);setTodayResult(null);}},[feelings]);
       useEffect(()=>{if(chatEndRef.current)chatEndRef.current.scrollIntoView({behavior:"smooth"});},[chatMessages]);
 
@@ -689,11 +736,18 @@
       const finishWorkout=()=>{const exs=workouts[activeDay]||[];if(exs.length===0)return;if(!todayEnergy)setModal("energy_then_result");else setModal("result");};
 
       const startWorkout=async()=>{
+        const startTs = Date.now();
+        localStorage.setItem('ironlog-workout-start', String(startTs));
+        localStorage.setItem('ironlog-workout-active-day', activeDay);
         setWorkoutActive(true);setWorkoutSeconds(0);setMotiveBanner("");setMotiveVisible(false);
         const lastWeek=history.filter(h=>h.day===activeDay);if(lastWeek.length===0)return;const lastEntry=lastWeek[0];
         try{const apiUrl=window.AI_API_URL;const exerciseSummary=lastEntry.exercises.map(ex=>{const maxW=Math.max(...ex.sets.map(s=>s.weight));return`${ex.name}: ${ex.sets.length} séries, carga máx ${maxW}kg`;}).join("; ");const res=await fetch(apiUrl+"analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({system:"Você é um personal trainer motivacional. Gere UMA frase curta (máx 15 palavras) e motivadora comparando com o treino anterior. Seja direto e incisivo. Responda APENAS a frase, sem aspas.",messages:[{role:"user",content:`Treino anterior (${lastEntry.date}): ${exerciseSummary}. Gere uma frase motivacional para o treino de hoje.`}]})});if(!res.ok)return;const data=await res.json();const text=data.content&&data.content[0]?data.content[0].text.trim():"";if(text){setMotiveBanner(text);setMotiveVisible(true);setTimeout(()=>setMotiveVisible(false),6000);}}catch(e){}
       };
-      const stopWorkout=()=>{setWorkoutActive(false);setWorkoutSeconds(0);setMotiveVisible(false);};
+      const stopWorkout=()=>{
+        setWorkoutActive(false);setWorkoutSeconds(0);setMotiveVisible(false);
+        localStorage.removeItem('ironlog-workout-start');
+        localStorage.removeItem('ironlog-workout-active-day');
+      };
       const formatWorkoutTime=(s)=>{const h=Math.floor(s/3600);const m=Math.floor((s%3600)/60);const sec=s%60;if(h>0)return`${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;return`${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;};
 
       const saveProfile=async()=>{
